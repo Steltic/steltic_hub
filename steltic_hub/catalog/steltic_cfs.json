@@ -1,0 +1,363 @@
+{
+  "schema": 1,
+  "id": "steltic_cfs",
+  "name": "CFS Steel",
+  "blurb": "AISI S100/S240/S400 cold-formed steel design agent — shear walls, portals, racks, purlins.",
+  "accent": "#9ad5b0",
+  "order": 20,
+  "homepage": "https://github.com/Steltic/steltic_cfs",
+  "source": {
+    "url": "https://github.com/Steltic/steltic_cfs",
+    "branch": "main"
+  },
+  "env": {
+    "python": "3.12",
+    "install": [
+      "-e",
+      "."
+    ]
+  },
+  "env_vars": {
+    "DATA_DIR": "{data_dir}/modules_data/steltic_cfs",
+    "DEMO": "0",
+    "RAG_API_URL": "{server.steltic_grokbot}/query"
+  },
+  "credentials": {
+    "path": "/api/creds",
+    "method": "POST"
+  },
+  "server": {
+    "command": [
+      "-m",
+      "uvicorn",
+      "steltic.main:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "{port}"
+    ],
+    "health": "/healthz",
+    "cwd": "{module_dir}",
+    "requires": [
+      "steltic_grokbot"
+    ]
+  },
+  "output": {
+    "root": "{data_dir}/modules_data/steltic_cfs/sessions/local/jobs/{job}"
+  },
+  "viewers": [
+    {
+      "id": "steltic",
+      "label": "CFS model",
+      "accent": "#9ad5b0",
+      "path": "viewer_3d.html"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "design",
+      "title": "Design",
+      "kind": "form",
+      "blurb": "Paste a brief and the agent writes cfg.py, runs the engine, fills the calc package and delivers report.html + viewer_3d.html. A new run on a project that already holds a design archives the old one beside it (<project>__<timestamp>). Specification clauses are retrieved from the Query file manager corpus on this PC when that module is installed; without it the agent cites the standards from memory and flags values to verify.",
+      "run": {
+        "kind": "http",
+        "method": "POST",
+        "path": "/api/run",
+        "stream": "sse",
+        "label": "Design building",
+        "cancel": {
+          "method": "POST",
+          "path": "/api/stop",
+          "body": {
+            "building": "{job}"
+          }
+        },
+        "body": {
+          "building": "{job}",
+          "brief": "{f.brief}",
+          "resume": false
+        }
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true,
+          "help": "Names the folder every module writes into for this building."
+        },
+        {
+          "id": "examples",
+          "type": "select",
+          "label": "Load an example brief",
+          "help": "25 briefs covering every supported lateral system, irregular plans and specialty cases. Edit it if you like, then run.",
+          "fills": {
+            "path": "/api/example/{value}",
+            "key": "brief",
+            "target": "brief"
+          },
+          "options": [
+            {
+              "value": "",
+              "label": "Example briefs…"
+            },
+            {
+              "value": "ex1",
+              "label": "Ex1 — WSP shear walls, 4 levels"
+            },
+            {
+              "value": "ex2",
+              "label": "Ex2 — Strap-braced, 6 levels"
+            },
+            {
+              "value": "ex3",
+              "label": "Ex3 — Bearing wall, 8 levels, podium"
+            },
+            {
+              "value": "ex4",
+              "label": "Ex4 — Steel-sheet walls, 5 levels, podium"
+            },
+            {
+              "value": "ex5",
+              "label": "Ex5 — Strap-braced, 6 levels (dormitory)"
+            },
+            {
+              "value": "ex6",
+              "label": "Ex6 — WSP, 5 levels, L-plan"
+            },
+            {
+              "value": "ex7",
+              "label": "Ex7 — Steel sheet, 6 levels, Z-plan"
+            },
+            {
+              "value": "ex8",
+              "label": "Ex8 — Strap-braced, 4 levels, T-plan"
+            },
+            {
+              "value": "ex9",
+              "label": "Ex9 — Podium 5-over-2, U-plan"
+            },
+            {
+              "value": "ex10",
+              "label": "Ex10 — SBMF, 2 levels, high bay"
+            },
+            {
+              "value": "ex11",
+              "label": "Ex11 — Gypsum walls, 3 levels, coastal wind"
+            },
+            {
+              "value": "ex12",
+              "label": "Ex12 — Steel sheet, 8 levels, cross-plan"
+            },
+            {
+              "value": "ex13",
+              "label": "Ex13 — Type II perforated walls, 4 levels"
+            },
+            {
+              "value": "ex14",
+              "label": "Ex14 — Mixed systems, 3 levels, split-level"
+            },
+            {
+              "value": "ex15",
+              "label": "Ex15 — WSP, 6 levels, stepped bar"
+            },
+            {
+              "value": "ex16",
+              "label": "Ex16 — Portal frame, single-span warehouse"
+            },
+            {
+              "value": "ex17",
+              "label": "Ex17 — Portal, two-span, heavy snow"
+            },
+            {
+              "value": "ex18",
+              "label": "Ex18 — Portal + mezzanine, mixed R"
+            },
+            {
+              "value": "ex19",
+              "label": "Ex19 — Portal with monorail, fatigue"
+            },
+            {
+              "value": "ex25",
+              "label": "Ex25 — Purlin/girt uplift retrofit"
+            },
+            {
+              "value": "ex26",
+              "label": "Ex26 — Open canopy, Cn wind"
+            },
+            {
+              "value": "ex27",
+              "label": "Ex27 — Single-channel portal, torsion"
+            },
+            {
+              "value": "ex28",
+              "label": "Ex28 — Ag building, partially enclosed"
+            },
+            {
+              "value": "ex29",
+              "label": "Ex29 — Freestanding mezzanine in existing bldg"
+            },
+            {
+              "value": "ex30",
+              "label": "Ex30 — Cold-storage portal"
+            }
+          ]
+        },
+        {
+          "id": "brief",
+          "type": "textarea",
+          "rows": 12,
+          "label": "Design brief",
+          "required": true,
+          "placeholder": "3-story mid-rise, CFS load-bearing walls, 25 ft × 60 ft plan.\nType I wood-sheathed shear walls both directions. Floor DL 45 psf / LL 40 psf.\nSeismic: SDC D, Ss=1.2g, S1=0.5g, Site D. Wind 130 mph Exp C.",
+          "help": "Stories, bays and spacings, loads, seismic parameters, lateral system."
+        },
+        {
+          "id": "analysis_fidelity",
+          "type": "select",
+          "label": "Analysis fidelity",
+          "default": "auto",
+          "help": "How faithfully the analysis model captures thin-wall section softening (stiffness only — strength checks are always the full AISI S100 set). Auto lets the agent pick the tier for your structure; the preflight check warns if a chosen tier looks wrong for it.",
+          "options": [
+            {
+              "value": "auto",
+              "label": "Auto (recommended)"
+            },
+            {
+              "value": "0",
+              "label": "Tier 0 — Standard (stud-wall buildings)"
+            },
+            {
+              "value": "1",
+              "label": "Tier 1 — Thin-walled members (portals, canopies)"
+            },
+            {
+              "value": "2",
+              "label": "Tier 2 — High fidelity (slender/torsion-critical)"
+            }
+          ]
+        },
+        {
+          "id": "images",
+          "type": "attachments",
+          "label": "Upload files",
+          "text_target": "brief",
+          "accept": ".txt,.md,.markdown,.text,.pdf,.png,.jpg,.jpeg,.gif,.webp",
+          "help": "Text / Markdown is read into the brief; a text-based PDF has its text extracted into the brief (scanned pages have no text layer); images are attached as references and sent to the model — the design agent uses the first three, and not every LLM can read images."
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Report",
+          "path": "report.html",
+          "accent": "#9ad5b0"
+        },
+        {
+          "label": "3D model",
+          "path": "viewer_3d.html",
+          "accent": "#9ad5b0"
+        }
+      ],
+      "links": [
+        {
+          "label": "Download package (.zip)",
+          "path": "/api/download/{job}",
+          "help": "Self-contained report, the model scripts and the resumable conversation — the file the Nonlinear module reads."
+        },
+        {
+          "label": "Which fidelity tier? ↗",
+          "path": "/static/analysis_fidelity_explainer.md"
+        }
+      ]
+    },
+    {
+      "id": "continue",
+      "title": "Continue",
+      "kind": "form",
+      "blurb": "Resume a paused or stopped design, or iterate on a finished one with new instructions. The agent keeps its full conversation, so a follow-up like “make the exterior columns W24X146 and rerun” continues THIS design.",
+      "run": {
+        "kind": "http",
+        "method": "POST",
+        "path": "/api/run",
+        "stream": "sse",
+        "label": "Continue",
+        "cancel": {
+          "method": "POST",
+          "path": "/api/stop",
+          "body": {
+            "building": "{job}"
+          }
+        },
+        "body": {
+          "building": "{job}",
+          "brief": "{f.brief}",
+          "resume": true
+        }
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        },
+        {
+          "id": "brief",
+          "type": "textarea",
+          "rows": 6,
+          "label": "Follow-up instructions (optional)",
+          "placeholder": "e.g. the W14 columns at level 3 are over-stressed — re-check and optimise.\nLeave empty to simply resume where the run stopped."
+        },
+        {
+          "id": "images",
+          "type": "attachments",
+          "label": "Upload files",
+          "text_target": "brief",
+          "accept": ".txt,.md,.markdown,.text,.pdf,.png,.jpg,.jpeg,.gif,.webp",
+          "help": "Text / Markdown is read into the brief; a text-based PDF has its text extracted into the brief (scanned pages have no text layer); images are attached as references and sent to the model — the design agent uses the first three, and not every LLM can read images."
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Report",
+          "path": "report.html",
+          "accent": "#9ad5b0"
+        },
+        {
+          "label": "3D model",
+          "path": "viewer_3d.html",
+          "accent": "#9ad5b0"
+        }
+      ],
+      "links": [
+        {
+          "label": "Download package (.zip)",
+          "path": "/api/download/{job}",
+          "help": "Self-contained report, the model scripts and the resumable conversation — the file the Nonlinear module reads."
+        },
+        {
+          "label": "Which fidelity tier? ↗",
+          "path": "/static/analysis_fidelity_explainer.md"
+        }
+      ]
+    },
+    {
+      "id": "viewers",
+      "title": "Viewers",
+      "kind": "viewers",
+      "blurb": "The interactive 3D model this module produced for the active project."
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "kind": "files"
+    },
+    {
+      "id": "app",
+      "title": "Full UI",
+      "kind": "embed",
+      "src": "/",
+      "blurb": "The module's own interface, served by its own server. Always current — a module update changes this tab with no hub release."
+    }
+  ]
+}

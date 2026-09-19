@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "steltic_probabilistic",
+  "name": "Probabilistic analysis",
+  "blurb": "Monte Carlo as-built variations of an HR Steel design — E, plate thickness, story out-of-plumb drawn from the literature — re-analysed with the design's own LRFD model and checked against its own AISC 360 capacities. Where would you take a second look?",
+  "accent": "#ffb070",
+  "order": 28,
+  "homepage": "https://github.com/Steltic/steltic_hub",
+  "source": {
+    "bundled": "steltic_probabilistic",
+    "url": "https://github.com/Steltic/steltic_hub"
+  },
+  "needs": ["steltic", "steltic_nonlinear"],
+  "env": {
+    "python": "3.12",
+    "install": ["-r", "requirements.txt"]
+  },
+  "env_vars": {
+    "STELTIC_URL": "{server.steltic}",
+    "STELTIC_ENGINE_DIR": "{need.steltic}/steel_engine",
+    "DDM_PYTHON": "{python.steltic_nonlinear}",
+    "PROB_JOBS": "{jobs_dir}"
+  },
+  "server": {
+    "command": ["-m", "uvicorn", "probabilistic.main:app", "--host", "127.0.0.1", "--port", "{port}"],
+    "health": "/healthz",
+    "cwd": "{module_dir}",
+    "requires": ["steltic"]
+  },
+  "output": {
+    "root": "{job_dir}/probabilistic"
+  },
+  "tabs": [
+    {
+      "id": "study",
+      "title": "Probabilistic",
+      "kind": "embed",
+      "src": "/?project={job}",
+      "blurb": "Load this project's HR Steel design (or any package), choose the number of as-built variations (default 100), run, and read the distribution of the maximum member and connection D/C against the design's own values. Runs in the Nonlinear module's environment; nothing is recomputed on the capacity side."
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "kind": "files"
+    }
+  ]
+}

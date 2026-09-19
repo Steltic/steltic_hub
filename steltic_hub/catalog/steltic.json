@@ -1,0 +1,377 @@
+{
+  "schema": 1,
+  "id": "steltic",
+  "name": "HR Steel",
+  "blurb": "AISC 360/341 hot-rolled steel design agent — brief in, OpenSees model + stamped-style report + 3D viewer out.",
+  "accent": "#ffa15c",
+  "order": 10,
+  "homepage": "https://github.com/Steltic/steltic",
+  "source": {
+    "url": "https://github.com/Steltic/steltic",
+    "branch": "main"
+  },
+  "env": {
+    "python": "3.12",
+    "install": [
+      "-e",
+      "."
+    ]
+  },
+  "env_vars": {
+    "DATA_DIR": "{data_dir}/modules_data/steltic",
+    "RAG_API_URL": "{server.steltic_grokbot}/query"
+  },
+  "credentials": {
+    "path": "/api/creds",
+    "method": "POST"
+  },
+  "server": {
+    "command": [
+      "-m",
+      "uvicorn",
+      "steltic.main:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "{port}"
+    ],
+    "health": "/healthz",
+    "cwd": "{module_dir}",
+    "requires": [
+      "steltic_grokbot"
+    ]
+  },
+  "output": {
+    "root": "{data_dir}/modules_data/steltic/sessions/local/jobs/{job}"
+  },
+  "viewers": [
+    {
+      "id": "steltic",
+      "label": "Steltic",
+      "accent": "#ffa15c",
+      "path": "viewer_3d.html"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "design",
+      "title": "Design",
+      "kind": "form",
+      "blurb": "Paste a brief and the agent writes cfg.py, runs the engine, fills the calc package and delivers report.html + viewer_3d.html. A new run on a project that already holds a design archives the old one beside it (<project>__<timestamp>). Specification clauses are retrieved from the Query file manager corpus on this PC when that module is installed; without it the agent cites the standards from memory and flags values to verify.",
+      "run": {
+        "kind": "http",
+        "method": "POST",
+        "path": "/api/run",
+        "stream": "sse",
+        "label": "Design building",
+        "cancel": {
+          "method": "POST",
+          "path": "/api/stop",
+          "body": {
+            "building": "{job}"
+          }
+        },
+        "body": {
+          "building": "{job}",
+          "brief": "{f.brief}",
+          "resume": false
+        }
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true,
+          "help": "Names the folder every module writes into for this building."
+        },
+        {
+          "id": "examples",
+          "type": "select",
+          "label": "Load an example brief",
+          "help": "37 briefs covering every supported lateral system, irregular plans and specialty cases. Edit it if you like, then run.",
+          "fills": {
+            "path": "/api/example/{value}",
+            "key": "brief",
+            "target": "brief"
+          },
+          "options": [
+            {
+              "value": "",
+              "label": "Example briefs…"
+            },
+            {
+              "value": "ex1",
+              "label": "Ex1 — SCBF, 5 levels"
+            },
+            {
+              "value": "ex2",
+              "label": "Ex2 — SMF, 9 levels"
+            },
+            {
+              "value": "ex3",
+              "label": "Ex3 — Braced + Moment, 7 levels"
+            },
+            {
+              "value": "ex4",
+              "label": "Ex4 — BRBF, 3 levels"
+            },
+            {
+              "value": "ex5",
+              "label": "Ex5 — SMF, 10 levels"
+            },
+            {
+              "value": "ex6",
+              "label": "Ex6 — SCBF, 6 levels"
+            },
+            {
+              "value": "ex7a",
+              "label": "Ex7a — SMF, 7 levels"
+            },
+            {
+              "value": "ex7b",
+              "label": "Ex7b — SCBF, 7 levels"
+            },
+            {
+              "value": "ex8",
+              "label": "Ex8 — EBF, 8 levels, L-plan"
+            },
+            {
+              "value": "ex9",
+              "label": "Ex9 — SPSW, 12 levels, T-plan"
+            },
+            {
+              "value": "ex10",
+              "label": "Ex10 — Dual SMF+SCBF, 16 levels, podium"
+            },
+            {
+              "value": "ex11",
+              "label": "Ex11 — BRBF, 10 levels, U-plan"
+            },
+            {
+              "value": "ex12",
+              "label": "Ex12 — SMF, 14 levels, chamfer + setback"
+            },
+            {
+              "value": "ex13",
+              "label": "Ex13 — OCBF, 4 levels, split-level"
+            },
+            {
+              "value": "ex14",
+              "label": "Ex14 — EBF, 11 levels, cruciform, hillside"
+            },
+            {
+              "value": "ex15",
+              "label": "Ex15 — Dual SMF+BRBF, 20 levels, wedding-cake"
+            },
+            {
+              "value": "ex16",
+              "label": "Ex16 — IMF, 3 levels, Z-plan school"
+            },
+            {
+              "value": "ex17",
+              "label": "Ex17 — SCBF, 9 levels, offset core"
+            },
+            {
+              "value": "ex18",
+              "label": "Ex18 — R=3 (not detailed), 8 levels, low seismic"
+            },
+            {
+              "value": "ex19",
+              "label": "Ex19 — SMF, 11 levels, soft-story podium"
+            },
+            {
+              "value": "ex20",
+              "label": "Ex20 — SCBF, 12 levels, transfer / discontinuous"
+            },
+            {
+              "value": "ex21",
+              "label": "Ex21 — OCBF, 1-story big-box, flexible diaphragm"
+            },
+            {
+              "value": "ex22",
+              "label": "Ex22 — SMF, 6 levels, hospital (Risk Cat IV)"
+            },
+            {
+              "value": "ex23",
+              "label": "Ex23 — Dual SMF+BRBF, 9 levels, SDC F near-fault EOC"
+            },
+            {
+              "value": "ex24",
+              "label": "Ex24 — Mixed: SMF N-S + SCBF E-W, 10 levels"
+            },
+            {
+              "value": "ex25",
+              "label": "Ex25 — SMF, 12 levels, atrium diaphragm discontinuity"
+            },
+            {
+              "value": "ex26",
+              "label": "Ex26 — Dual SMF+SCBF, 18 levels, slender, wind-governed"
+            },
+            {
+              "value": "ex27",
+              "label": "Ex27 — CC-PSW/CF SpeedCore, 20 levels, composite"
+            },
+            {
+              "value": "ex28",
+              "label": "Ex28 — STMF, 8 levels, long-span truss moment"
+            },
+            {
+              "value": "ex29",
+              "label": "Ex29 — Dual SMF+BRBF, 20 levels, 264 ft, NLRHA/PBSD"
+            },
+            {
+              "value": "ex30",
+              "label": "Ex30 — Composite floors + SCBF, 6 levels, studs/camber"
+            },
+            {
+              "value": "ex31",
+              "label": "Ex31 — Gable warehouse, R=3, snow + ponding"
+            },
+            {
+              "value": "ex32",
+              "label": "Ex32 — Vertical addition on 1968 A36 frame, ASCE 41 scope"
+            },
+            {
+              "value": "ex33",
+              "label": "Ex33 — Crane bay, IMF+OCBF, App.3 fatigue runway"
+            },
+            {
+              "value": "ex34",
+              "label": "Ex34 — Twin towers on shared podium, seismic joint"
+            },
+            {
+              "value": "ex35",
+              "label": "Ex35 — Ch.15 equipment platform, 3 tiers"
+            },
+            {
+              "value": "redesign",
+              "label": "Ex7a — redesign brief"
+            }
+          ]
+        },
+        {
+          "id": "brief",
+          "type": "textarea",
+          "rows": 12,
+          "label": "Design brief",
+          "required": true,
+          "placeholder": "4-story office, 3 bays @ 30 ft (X) × 4 bays @ 25 ft (Y), 15 ft ground / 13 ft typ.\nPerimeter special moment frames. Roof DL 25 psf / LL 20 psf; floor DL 75 / LL 50.\nSeismic: SDC D, Ss=1.5g, S1=0.6g, Site C. Wind 115 mph Exp B.",
+          "help": "Stories, bays and spacings, loads, seismic parameters, lateral system."
+        },
+        {
+          "id": "images",
+          "type": "attachments",
+          "label": "Upload files",
+          "text_target": "brief",
+          "accept": ".txt,.md,.markdown,.text,.pdf,.png,.jpg,.jpeg,.gif,.webp",
+          "help": "Text / Markdown is read into the brief; a text-based PDF has its text extracted into the brief (scanned pages have no text layer); images are attached as references and sent to the model — the design agent uses the first three, and not every LLM can read images."
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Report",
+          "path": "report.html",
+          "accent": "#ffa15c"
+        },
+        {
+          "label": "3D model",
+          "path": "viewer_3d.html",
+          "accent": "#ffa15c"
+        }
+      ],
+      "links": [
+        {
+          "label": "Download package (.zip)",
+          "path": "/api/download/{job}",
+          "help": "Self-contained report, the model scripts and the resumable conversation — the file the Nonlinear module reads."
+        }
+      ]
+    },
+    {
+      "id": "continue",
+      "title": "Continue",
+      "kind": "form",
+      "blurb": "Resume a paused or stopped design, or iterate on a finished one with new instructions. The agent keeps its full conversation, so a follow-up like “make the exterior columns W24X146 and rerun” continues THIS design.",
+      "run": {
+        "kind": "http",
+        "method": "POST",
+        "path": "/api/run",
+        "stream": "sse",
+        "label": "Continue",
+        "cancel": {
+          "method": "POST",
+          "path": "/api/stop",
+          "body": {
+            "building": "{job}"
+          }
+        },
+        "body": {
+          "building": "{job}",
+          "brief": "{f.brief}",
+          "resume": true
+        }
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        },
+        {
+          "id": "brief",
+          "type": "textarea",
+          "rows": 6,
+          "label": "Follow-up instructions (optional)",
+          "placeholder": "e.g. the W14 columns at level 3 are over-stressed — re-check and optimise.\nLeave empty to simply resume where the run stopped."
+        },
+        {
+          "id": "images",
+          "type": "attachments",
+          "label": "Upload files",
+          "text_target": "brief",
+          "accept": ".txt,.md,.markdown,.text,.pdf,.png,.jpg,.jpeg,.gif,.webp",
+          "help": "Text / Markdown is read into the brief; a text-based PDF has its text extracted into the brief (scanned pages have no text layer); images are attached as references and sent to the model — the design agent uses the first three, and not every LLM can read images."
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Report",
+          "path": "report.html",
+          "accent": "#ffa15c"
+        },
+        {
+          "label": "3D model",
+          "path": "viewer_3d.html",
+          "accent": "#ffa15c"
+        }
+      ],
+      "links": [
+        {
+          "label": "Download package (.zip)",
+          "path": "/api/download/{job}",
+          "help": "Self-contained report, the model scripts and the resumable conversation — the file the Nonlinear module reads."
+        }
+      ]
+    },
+    {
+      "id": "viewers",
+      "title": "Viewers",
+      "kind": "viewers",
+      "blurb": "The interactive 3D model this module produced for the active project."
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "kind": "files"
+    },
+    {
+      "id": "app",
+      "title": "Full UI",
+      "kind": "embed",
+      "src": "/",
+      "blurb": "The module's own interface, served by its own server. Always current — a module update changes this tab with no hub release."
+    }
+  ]
+}

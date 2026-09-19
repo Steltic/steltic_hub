@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "steltic-hub"
+version = "0.2.0"
+description = "Desktop hub for the Steltic modules: one window, per-module Python environments, input tabs on top of the viewer bundle"
+readme = "README.md"
+license = "MIT"
+# The hub itself has no openseespy bound -- it never imports module code. Each module gets its
+# own interpreter (3.12 by default) provisioned by uv, which is what keeps that constraint local.
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+steltic-hub = "steltic_hub.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["steltic_hub"]

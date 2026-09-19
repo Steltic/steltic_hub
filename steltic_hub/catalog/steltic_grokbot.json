@@ -1,0 +1,636 @@
+{
+  "schema": 1,
+  "id": "steltic_grokbot",
+  "name": "Query file manager",
+  "blurb": "Convert your licensed spec PDFs locally and query them for verbatim excerpts — and ground the design agents on them. No vector DB; no spec text leaves this PC.",
+  "accent": "#e0a878",
+  "order": 40,
+  "homepage": "https://github.com/Steltic/steltic_grokbot",
+  "source": {
+    "url": "https://github.com/Steltic/steltic_grokbot",
+    "branch": "main"
+  },
+  "env": {
+    "python": "3.12",
+    "install": [],
+    "post_install": [
+      [
+        "-c",
+        "import shutil,pathlib,os,stat,filecmp\nsrc=pathlib.Path(r\"{module_dir}\"); dst=pathlib.Path(r\"{data_dir}\")/\"grokbot\"\ndst.mkdir(parents=True,exist_ok=True)\n\n# ---- 1. the shipped OpenSees/examples corpus: DATA ONLY ----------------------------------------\n# Two of its folders must not land where they appear to belong:\n#   indexes/  flattened into dst/indexes it shares four filenames with the PDF converter's output,\n#             and the first conversion overwrote them. It gets a folder of its own.\n#   scripts/  the distributable packer froze a COPY of retrieval.py, build_index.py and search.py\n#             into this bundle. Copied over the workspace it silently reverted the retrieval code\n#             to that snapshot -- so every query on this machine was answered by months-old code\n#             while the module checkout beside it was current and `Update` reported success. The\n#             bundle ships data; the code comes from the module, and only from the module.\np2=src/\"engineering_rag_phase2\"\nif p2.is_dir():\n    for c in p2.iterdir():\n        if c.name == \"scripts\":\n            continue\n        if c.name == \"indexes\":\n            shutil.copytree(c, dst/\"engineering_rag_phase2\"/\"indexes\", dirs_exist_ok=True)\n            for f in (\"aliases.json\",\"master_toc.json\"):\n                if (c/f).is_file() and not (dst/\"indexes\"/f).is_file():\n                    (dst/\"indexes\").mkdir(parents=True,exist_ok=True); shutil.copy2(c/f, dst/\"indexes\"/f)\n            continue\n        t=dst/c.name\n        if c.is_dir(): shutil.copytree(c,t,dirs_exist_ok=True)\n        else: shutil.copy2(c,t)\n\n# ---- 2. the module's scripts, LAST, so code always wins over anything a data bundle carries -----\n# The workspace keeps its own copy because the tabs and the grounding server run from the workspace\n# and retrieval.find_root expects scripts/ beside documents/. Copied file by file with the\n# read-only bit cleared, because copytree leaves a read-only destination in place without a word.\nif (src/\"scripts\").is_dir():\n    (dst/\"scripts\").mkdir(parents=True, exist_ok=True)\n    replaced, failed = [], []\n    for f in sorted((src/\"scripts\").rglob(\"*\")):\n        if f.is_dir() or \"__pycache__\" in f.parts:\n            continue\n        t = dst/\"scripts\"/f.relative_to(src/\"scripts\")\n        t.parent.mkdir(parents=True, exist_ok=True)\n        if t.is_file() and t.stat().st_size == f.stat().st_size and t.read_bytes() == f.read_bytes():\n            continue\n        try:\n            if t.exists():\n                os.chmod(t, stat.S_IWRITE | stat.S_IREAD)\n            shutil.copy2(f, t)\n            replaced.append(f.name)\n        except OSError as e:\n            failed.append(f\"{f.name} ({e.__class__.__name__})\")\n    if replaced:\n        print(\"[grokbot] workspace scripts refreshed:\", \", \".join(replaced))\n    if failed:\n        print(\"[grokbot] COULD NOT REFRESH:\", \", \".join(failed))\n        raise SystemExit(\"[grokbot] the workspace code is older than the module -- queries would use the OLD code\")\n\n# ---- 3. prove it, rather than assume it --------------------------------------------------------\n# This check is the whole reason the fault above survived four rounds of fixes: nothing ever\n# compared the code the server imports with the code that was installed.\nstale=[]\nfor n in (\"retrieval.py\",\"build_index.py\",\"search.py\"):\n    a, b = src/\"scripts\"/n, dst/\"scripts\"/n\n    if not a.is_file():\n        continue\n    if not b.is_file() or a.read_bytes() != b.read_bytes():\n        stale.append(n)\nif stale:\n    raise SystemExit(\"[grokbot] workspace code does not match the module: \" + \", \".join(stale))\n\nfor d in (\"documents/standards\",\"queue/in\",\"queue/out\",\"queue/done\",\"markdown\"):\n    (dst/d).mkdir(parents=True,exist_ok=True)\nprint(\"[grokbot] workspace ready at\", dst)\nprint(\"[grokbot] put your licensed spec PDFs in\", dst/\"documents\"/\"standards\")"
+      ]
+    ],
+    "optional": {
+      "converter": {
+        "label": "PDF converter (Docling 2.123.1)",
+        "requirements": [
+          "docling[rapidocr]==2.123.1"
+        ],
+        "probe_import": [
+          "docling",
+          "rapidocr",
+          "onnxruntime"
+        ],
+        "help": "Only needed to convert PDFs. Large download (ML stack). The repo pins 2.123.1 — do not upgrade without revalidating retrieval accuracy. The [rapidocr] extra adds onnxruntime, which convert_pdf.py's RapidOCR fallback needs (plain docling ships rapidocr without its runtime)."
+      }
+    }
+  },
+  "env_vars": {
+    "DOCLING_DEVICE": "cpu",
+    "TESSDATA_PREFIX": "/usr/share/tesseract-ocr/5/tessdata/"
+  },
+  "output": {
+    "root": "{job_dir}"
+  },
+  "tabs": [
+    {
+      "id": "corpus",
+      "title": "Corpus",
+      "kind": "form",
+      "blurb": "What this machine actually has. Run this first — it tells you which collections are queryable now and what is still missing. The OpenSees and worked-example collections ship with the module; the specifications are your own converted PDFs.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{data_dir}/grokbot",
+        "label": "Check corpus",
+        "command": [
+          "-c",
+          "import pathlib,sqlite3,json,sys\nroot=pathlib.Path(r\"{data_dir}\")/\"grokbot\"\nprint(\"workspace:\", root)\nstd=root/\"documents\"/\"standards\"\npdfs=sorted(p.name for p in (root/\"documents\"/\"standards\").rglob(\"*.pdf\")) if std.is_dir() else []\nprint()\nprint(\"== your licensed specifications ==\")\nprint(\"  folder:\", std)\nprint(\"  PDFs present:\", len(pdfs))\nfor n in pdfs[:25]: print(\"   -\", n)\nconv=sorted(p.stem for p in (root/\"markdown\").glob(\"*.md\")) if (root/\"markdown\").is_dir() else []\nprint(\"  converted stems:\", \", \".join(conv[:25]) or \"(none yet)\")\nprint()\nprint(\"== search indexes ==\")\nfor name,what in ((\"spec_fts.sqlite\",\"your converted specifications\"),(\"phase2_fts.sqlite\",\"OpenSees docs + worked examples (ships with the module)\")):\n    f=root/\"search\"/name\n    if f.is_file():\n        try:\n            c=sqlite3.connect(f); n=c.execute(\"select count(*) from chunks\").fetchone()[0]\n            print(f\"  {name:20} {n:>7} chunks   {what}\")\n        except Exception as e: print(f\"  {name:20} present but unreadable: {e}\")\n    else:\n        print(f\"  {name:20} MISSING           {what}\")\nprint()\nidx=root/\"indexes\"/\"documents.json\"\nif idx.is_file():\n    d=json.loads(idx.read_text())\n    rows=d if isinstance(d,list) else list(d.values())\n    cols={}\n    for r in rows:\n        if isinstance(r,dict): cols[r.get(\"collection\")]=cols.get(r.get(\"collection\"),0)+1\n    print(\"== collections ==\")\n    for k,v in sorted(cols.items(), key=lambda x:-x[1]): print(f\"  {str(k):24} {v} documents\")\nprint()\nif not (root/\"search\"/\"spec_fts.sqlite\").is_file():\n    print(\"NEXT: the specification corpus is empty. Put your own licensed PDFs in the standards\")\n    print(\"      folder above, convert each one on the Convert PDF tab using its canonical stem,\")\n    print(\"      then run Rebuild index. Until then, query the opensees and examples collections,\")\n    print(\"      which ship with the module.\")\nelse:\n    print(\"Specification corpus is present. Queries default to it.\")\n"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project"
+        }
+      ]
+    },
+    {
+      "id": "ask",
+      "title": "Query",
+      "kind": "form",
+      "blurb": "Verbatim excerpts from the converted corpus. `found: false` is an honest answer — nothing is paraphrased or invented. Only corpus=specification, part=standard may supply design values; OpenSees and example content is not authoritative.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{data_dir}/grokbot",
+        "label": "Search",
+        "command": [
+          "{data_dir}/grokbot/scripts/search.py",
+          "{f.mode}",
+          "{f.query}",
+          "--root",
+          "{data_dir}/grokbot"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "help": "Queries are logged to this project's folder."
+        },
+        {
+          "id": "mode",
+          "type": "select",
+          "label": "Lookup",
+          "default": "fts",
+          "options": [
+            {
+              "value": "fts",
+              "label": "Full text"
+            },
+            {
+              "value": "keyword",
+              "label": "Keyword"
+            },
+            {
+              "value": "exact_section",
+              "label": "Section id"
+            },
+            {
+              "value": "exact_equation",
+              "label": "Equation id"
+            },
+            {
+              "value": "exact_table",
+              "label": "Table id"
+            },
+            {
+              "value": "id",
+              "label": "Any id"
+            },
+            {
+              "value": "command",
+              "label": "OpenSees command"
+            }
+          ]
+        },
+        {
+          "id": "query",
+          "type": "text",
+          "label": "Query",
+          "required": true,
+          "placeholder": "e.g. E3-4   ·   panel zone shear strength   ·   effective length factor"
+        },
+        {
+          "id": "doc",
+          "type": "select",
+          "label": "Document",
+          "arg": "--doc",
+          "default": "",
+          "help": "Canonical stems, fixed by the skills — retrieval ids depend on them.",
+          "options": [
+            {
+              "value": "",
+              "label": "Any document"
+            },
+            {
+              "value": "AISC_360_22",
+              "label": "AISC 360-22"
+            },
+            {
+              "value": "AISC_341_22",
+              "label": "AISC 341-22"
+            },
+            {
+              "value": "AISC_358_22",
+              "label": "AISC 358-22"
+            },
+            {
+              "value": "ASCE7",
+              "label": "ASCE/SEI 7-22"
+            },
+            {
+              "value": "AISI_S100",
+              "label": "AISI S100-16 (R2020) w/S3"
+            },
+            {
+              "value": "AISI_S240",
+              "label": "AISI S240-20"
+            },
+            {
+              "value": "AISI_S400_20",
+              "label": "AISI S400-20"
+            },
+            {
+              "value": "ASCE_41_23",
+              "label": "ASCE/SEI 41-23"
+            },
+            {
+              "value": "AISC_342_22",
+              "label": "ANSI/AISC 342-22"
+            }
+          ]
+        },
+        {
+          "id": "collection",
+          "type": "select",
+          "label": "Collection",
+          "arg": "--collection",
+          "default": "",
+          "help": "Specifications come from your own converted PDFs. The OpenSees and examples collections ship with the module and work before you convert anything.",
+          "options": [
+            {
+              "value": "",
+              "label": "Specifications first, then everything"
+            },
+            {
+              "value": "opensees",
+              "label": "OpenSees documentation (ships with module)"
+            },
+            {
+              "value": "examples",
+              "label": "Worked design examples (ships with module)"
+            }
+          ]
+        },
+        {
+          "id": "limit",
+          "type": "number",
+          "label": "Max hits",
+          "arg": "--limit",
+          "default": 12
+        },
+        {
+          "id": "neighbors",
+          "type": "number",
+          "label": "Context neighbours",
+          "arg": "--neighbors",
+          "default": 1
+        },
+        {
+          "id": "commentary",
+          "type": "checkbox",
+          "label": "Include commentary",
+          "arg": "--commentary",
+          "arg_style": "flag-if-true",
+          "help": "Off by default: only corpus=specification, part=standard may supply design values."
+        }
+      ]
+    },
+    {
+      "id": "convert",
+      "title": "Convert PDF",
+      "kind": "form",
+      "blurb": "Docling at full accuracy: TableFormer ACCURATE, formula enrichment on, OCR fallback. Accuracy flags are never lowered — use page chunking if a machine runs out of memory. Needs the optional component \"PDF converter (Docling 2.123.1)\" — install it once from the Modules tab (large download, the ML stack); the hub refuses to run this tab until it is present.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{data_dir}/grokbot",
+        "label": "Convert",
+        "command": [
+          "{data_dir}/grokbot/scripts/convert_pdf.py",
+          "{f.pdf}",
+          "{data_dir}/grokbot"
+        ],
+        "crash_hint": "Convert again with the same stem -- it resumes from the last finished chunk (the log shows 'Resume: reusing existing chunk pages'). If it dies at the same place twice, lower Pages per chunk (5 -> 2) or use Page range to isolate the page; a memory-hungry page in PyTorch or onnxruntime is the usual cause.",
+        "retry": {
+          "on": "native_crash",
+          "max": 3,
+          "then_set": {
+            "chunk_pages": 2
+          }
+        }
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project"
+        },
+        {
+          "id": "pdf",
+          "type": "file",
+          "label": "Specification PDF",
+          "accept": ".pdf",
+          "required": true,
+          "help": "Your own licensed copy. Nothing is uploaded anywhere — conversion runs on this machine."
+        },
+        {
+          "id": "stem",
+          "type": "select",
+          "label": "Canonical stem",
+          "arg": "--stem",
+          "default": "",
+          "help": "Must match exactly: the skills' id traps are edition-specific.",
+          "options": [
+            {
+              "value": "AISC_360_22",
+              "label": "AISC 360-22"
+            },
+            {
+              "value": "AISC_341_22",
+              "label": "AISC 341-22"
+            },
+            {
+              "value": "AISC_358_22",
+              "label": "AISC 358-22"
+            },
+            {
+              "value": "ASCE7",
+              "label": "ASCE/SEI 7-22"
+            },
+            {
+              "value": "AISI_S100",
+              "label": "AISI S100-16 (R2020) w/S3"
+            },
+            {
+              "value": "AISI_S240",
+              "label": "AISI S240-20"
+            },
+            {
+              "value": "AISI_S400_20",
+              "label": "AISI S400-20"
+            },
+            {
+              "value": "ASCE_41_23",
+              "label": "ASCE/SEI 41-23"
+            },
+            {
+              "value": "AISC_342_22",
+              "label": "ANSI/AISC 342-22"
+            },
+            {
+              "value": "",
+              "label": "From the filename"
+            }
+          ]
+        },
+        {
+          "id": "chunk_pages",
+          "type": "number",
+          "label": "Pages per chunk",
+          "arg": "--chunk-pages",
+          "default": 5,
+          "help": "5 is the documented default. Lower it only to work around out-of-memory, never to gain speed."
+        },
+        {
+          "id": "page_range",
+          "type": "text",
+          "label": "Page range",
+          "arg": "--page-range",
+          "placeholder": "1-180"
+        },
+        {
+          "id": "profile",
+          "type": "select",
+          "label": "Commentary profile",
+          "arg": "--commentary-profile",
+          "default": "auto",
+          "options": [
+            {
+              "value": "auto",
+              "label": "auto"
+            },
+            {
+              "value": "aisi_s400",
+              "label": "aisi_s400"
+            },
+            {
+              "value": "aisi_s100",
+              "label": "aisi_s100"
+            },
+            {
+              "value": "aisi_s240",
+              "label": "aisi_s240"
+            },
+            {
+              "value": "asce7",
+              "label": "asce7"
+            },
+            {
+              "value": "aisc",
+              "label": "aisc"
+            },
+            {
+              "value": "aisc_358",
+              "label": "aisc_358"
+            },
+            {
+              "value": "aisc_341",
+              "label": "aisc_341"
+            }
+          ]
+        }
+      ],
+      "requires_optional": [
+        "converter"
+      ]
+    },
+    {
+      "id": "reprocess",
+      "title": "Re-process",
+      "kind": "form",
+      "blurb": "Rebuild one converted document's searchable markdown, sections, equations and tables from the Docling chunks already on disk — no re-conversion, minutes not hours. Use it after a pipeline fix, or when a document's text looks like another's. Pick the stem exactly as the conversion named it (the Corpus tab lists them), and give it the source PDF (equation ids, table captions and ligature repair all read it), then run Rebuild index. The converter's records go to indexes/converted; Rebuild index reads them from there.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{data_dir}/grokbot",
+        "label": "Re-process document",
+        "command": [
+          "{data_dir}/grokbot/scripts/postprocess.py",
+          "{data_dir}/grokbot",
+          "--indexes-dir",
+          "{data_dir}/grokbot/indexes/converted"
+        ],
+        "crash_hint": "Re-processing reads the PDF only for the equation census; if it died there, run it again with the source PDF left blank."
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project"
+        },
+        {
+          "id": "stem",
+          "type": "select",
+          "label": "Converted document",
+          "arg": "--stem",
+          "default": "",
+          "help": "The stem the conversion used — the name of its .search.md in the markdown folder.",
+          "options": [
+            {
+              "value": "",
+              "label": "From convert_meta.json (single-document workspace only)"
+            },
+            {
+              "value": "A360_22",
+              "label": "A360_22"
+            },
+            {
+              "value": "A341_22",
+              "label": "A341_22"
+            },
+            {
+              "value": "A358_22",
+              "label": "A358_22"
+            },
+            {
+              "value": "A342_22",
+              "label": "A342_22"
+            },
+            {
+              "value": "asce41_23",
+              "label": "asce41_23"
+            },
+            {
+              "value": "AISC_360_22",
+              "label": "AISC_360_22"
+            },
+            {
+              "value": "AISC_341_22",
+              "label": "AISC_341_22"
+            },
+            {
+              "value": "AISC_358_22",
+              "label": "AISC_358_22"
+            },
+            {
+              "value": "AISI_S100",
+              "label": "AISI_S100"
+            },
+            {
+              "value": "AISI_S240",
+              "label": "AISI_S240"
+            },
+            {
+              "value": "AISI_S400_20",
+              "label": "AISI_S400_20"
+            },
+            {
+              "value": "ASCE7",
+              "label": "ASCE7"
+            }
+          ]
+        },
+        {
+          "id": "pdf",
+          "type": "file",
+          "label": "Source PDF (optional)",
+          "arg": "--pdf",
+          "help": "Only needed for the equation census. Leave empty to skip it."
+        },
+        {
+          "id": "profile",
+          "type": "select",
+          "label": "Commentary profile",
+          "arg": "--profile",
+          "default": "auto",
+          "options": [
+            {
+              "value": "auto",
+              "label": "auto"
+            },
+            {
+              "value": "aisc",
+              "label": "aisc"
+            },
+            {
+              "value": "aisc_341",
+              "label": "aisc_341"
+            },
+            {
+              "value": "aisc_358",
+              "label": "aisc_358"
+            },
+            {
+              "value": "asce7",
+              "label": "asce7"
+            },
+            {
+              "value": "aisi_s100",
+              "label": "aisi_s100"
+            },
+            {
+              "value": "aisi_s240",
+              "label": "aisi_s240"
+            },
+            {
+              "value": "aisi_s400",
+              "label": "aisi_s400"
+            }
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Convert metadata",
+          "path": "convert_meta.json"
+        }
+      ]
+    },
+    {
+      "id": "index",
+      "title": "Rebuild index",
+      "kind": "form",
+      "blurb": "Rebuild the FTS index and slices after converting or revising documents.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{data_dir}/grokbot",
+        "label": "Rebuild",
+        "command": [
+          "{data_dir}/grokbot/scripts/build_index.py",
+          "--root",
+          "{data_dir}/grokbot"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project"
+        }
+      ]
+    },
+    {
+      "id": "audit",
+      "title": "Audit corpus",
+      "kind": "form",
+      "blurb": "Check the built index for the faults a query cannot see: another document's text under this one's ids, a document indexed twice, commentary tagged as provisions, equation LaTeX printed with another id, a table of contents posing as a numbered table, split ligatures, watermarks, missing headings. Rebuild index runs this automatically; run it here after converting or re-processing, and read indexes/audit_report.md. What to do about each finding: skills/CHECK-AND-CLEAN-CONVERSIONS.md.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{data_dir}/grokbot",
+        "label": "Audit",
+        "command": [
+          "{data_dir}/grokbot/scripts/audit_corpus.py",
+          "--root",
+          "{data_dir}/grokbot"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project"
+        },
+        {
+          "id": "pdf_dir",
+          "type": "text",
+          "label": "Folder with the source PDFs (optional)",
+          "arg": "--pdf-dir",
+          "help": "Absolute path of the folder holding the source PDFs (the project folder you converted from). Lets the audit count the equation ids printed in each PDF and compare them with the index. Leave empty to skip that check.",
+          "default": ""
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Audit report",
+          "path": "indexes/audit_report.md"
+        }
+      ]
+    },
+    {
+      "id": "plan",
+      "title": "Retrieval plan",
+      "kind": "form",
+      "blurb": "Run a whole wave-1 plan at once — the batch path the SNL skill uses to fill hinge parameters.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{data_dir}/grokbot",
+        "label": "Process plan",
+        "command": [
+          "{data_dir}/grokbot/scripts/serve_queue.py",
+          "--root",
+          "{data_dir}/grokbot",
+          "--plan",
+          "{f.planfile}"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project"
+        },
+        {
+          "id": "planfile",
+          "type": "file",
+          "label": "Plan JSON",
+          "accept": ".json",
+          "required": true,
+          "help": "{plan_id, submitted, queries:[{qid, doc, type, query, purpose, want_commentary, context_neighbors}]}"
+        }
+      ]
+    },
+    {
+      "id": "grounding",
+      "title": "Grounding",
+      "kind": "embed",
+      "src": "/",
+      "blurb": "What the design agents are asking this corpus, and what they got back. HR Steel and CFS point their standards search here automatically."
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "kind": "files"
+    }
+  ],
+  "server": {
+    "command": [
+      "{catalog_dir}/steltic_grokbot/rag_server.py",
+      "--root",
+      "{data_dir}/grokbot",
+      "--port",
+      "{port}"
+    ],
+    "health": "/healthz",
+    "cwd": "{data_dir}/grokbot"
+  }
+}

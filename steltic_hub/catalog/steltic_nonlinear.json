@@ -1,0 +1,970 @@
+{
+  "schema": 1,
+  "id": "steltic_nonlinear",
+  "name": "Nonlinear (SNL)",
+  "blurb": "Pushover (ASCE 41-23 NSP), NLRHA (ASCE 7-22 Ch.16) and DDM (GMNIA) on a Steltic design package, the four-analyses comparison, site-specific ground motions, the §16.1.4 design criteria draft, and three feedback loops that hand a verified re-design back to HR Steel.",
+  "accent": "#ff8a3d",
+  "order": 30,
+  "homepage": "https://github.com/Steltic/steltic_nonlinear",
+  "source": {
+    "url": "https://github.com/Steltic/steltic_nonlinear",
+    "branch": "main"
+  },
+  "env": {
+    "python": "3.12",
+    "install": [
+      "-e",
+      ".[hub]"
+    ]
+  },
+  "needs": [
+    "steltic"
+  ],
+  "env_vars": {
+    "STELTIC_ENGINE_DIR": "{need.steltic}/steel_engine",
+    "STELTIC_URL": "{server.steltic}",
+    "SNL_JOBS": "{jobs_dir}"
+  },
+  "output": {
+    "root": "{job_dir}"
+  },
+  "viewers": [
+    {
+      "id": "steltic",
+      "label": "Steltic",
+      "accent": "#ffa15c",
+      "path": "viewer_3d.html"
+    },
+    {
+      "id": "pushover",
+      "label": "Pushover",
+      "accent": "#ff8a3d",
+      "path": "pushover/pushover_viewer_3d.html"
+    },
+    {
+      "id": "nlrha",
+      "label": "NLRHA",
+      "accent": "#3fc1a0",
+      "path": "nlrha/nlrha_viewer_3d.html"
+    },
+    {
+      "id": "ddm",
+      "label": "DDM",
+      "accent": "#e0b341",
+      "path": "ddm_viewer_3d.html"
+    },
+    {
+      "id": "bundle",
+      "label": "All four",
+      "accent": "#f0ebe4",
+      "path": "steltic_viewer_bundle.html"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "run",
+      "title": "Run",
+      "kind": "form",
+      "blurb": "Three engines in sequence, each in its own process (openseespy is a process singleton). The design package is copied into this project folder first, so every output lands beside it. Typical times on two cores: pushover 5–15 min, NLRHA 30–90 min, DDM 30–70 min. The §16.1.4 design criteria draft is refreshed at the end of every run.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{job_dir}",
+        "label": "Run analyses",
+        "stage": [
+          {
+            "from": "{f.package}",
+            "to": "{job_dir}",
+            "required": true,
+            "label": "design package",
+            "missing": "No design package for this project: run HR Steel on it first (its design is picked up automatically), or choose the .zip that HR Steel produced."
+          }
+        ],
+        "command": [
+          "-m",
+          "snl",
+          "run",
+          "{job_dir}",
+          "--out",
+          "{job_dir}",
+          "--steltic-engine",
+          "{need.steltic}/steel_engine"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        },
+        {
+          "id": "package",
+          "type": "file",
+          "label": "Steltic design package",
+          "accept": ".zip",
+          "default": "{out.steltic}",
+          "placeholder": "this project's HR Steel design (automatic)",
+          "help": "Leave as is to analyse the HR Steel design already in this project, or choose the .zip HR Steel produced (report.html, cfg.py, model_opensees.py, design/…)."
+        },
+        {
+          "id": "params",
+          "type": "file",
+          "label": "Job hinge parameters",
+          "accept": ".json",
+          "arg": "--params",
+          "help": "Job copy of hinge_params.json filled from AISC 342-22 / ASCE 41-23. Without it the pushover report carries the red UNVERIFIED banner."
+        },
+        {
+          "id": "only",
+          "type": "select",
+          "label": "Steps",
+          "arg": "--only",
+          "default": "",
+          "help": "Leave on all three unless you are re-running one.",
+          "options": [
+            {
+              "value": "",
+              "label": "All three (pushover + NLRHA + DDM)"
+            },
+            {
+              "value": "pushover",
+              "label": "Pushover only"
+            },
+            {
+              "value": "nlrha",
+              "label": "NLRHA only"
+            },
+            {
+              "value": "ddm",
+              "label": "DDM only"
+            }
+          ]
+        },
+        {
+          "id": "skip",
+          "type": "select",
+          "label": "Skip",
+          "arg": "--skip",
+          "default": "",
+          "options": [
+            {
+              "value": "",
+              "label": "Nothing"
+            },
+            {
+              "value": "pushover",
+              "label": "Skip pushover"
+            },
+            {
+              "value": "nlrha",
+              "label": "Skip NLRHA"
+            },
+            {
+              "value": "ddm",
+              "label": "Skip DDM"
+            }
+          ]
+        },
+        {
+          "id": "risk_category",
+          "type": "select",
+          "label": "Risk category",
+          "arg": "--risk-category",
+          "default": "",
+          "help": "Drives the Chapter 16 acceptance rules and the BPON levels.",
+          "options": [
+            {
+              "value": "",
+              "label": "From the package"
+            },
+            {
+              "value": "I",
+              "label": "I"
+            },
+            {
+              "value": "II",
+              "label": "II"
+            },
+            {
+              "value": "III",
+              "label": "III"
+            },
+            {
+              "value": "IV",
+              "label": "IV"
+            }
+          ]
+        },
+        {
+          "id": "site_class",
+          "type": "select",
+          "label": "Site class",
+          "arg": "--site-class",
+          "default": "D",
+          "options": [
+            {
+              "value": "A",
+              "label": "A"
+            },
+            {
+              "value": "B",
+              "label": "B"
+            },
+            {
+              "value": "C",
+              "label": "C"
+            },
+            {
+              "value": "D",
+              "label": "D"
+            },
+            {
+              "value": "E",
+              "label": "E"
+            }
+          ]
+        },
+        {
+          "id": "n_records",
+          "type": "number",
+          "label": "Ground-motion records",
+          "arg": "--n-records",
+          "default": 11,
+          "help": "ASCE 7-22 Ch.16 requires at least 11 MCE_R pairs. FEMA P-695 far-field set ships with the module."
+        },
+        {
+          "id": "target",
+          "type": "select",
+          "label": "Scaling target",
+          "arg": "--target",
+          "default": "",
+          "help": "Site-specific targets need the Site hazard tab first (writes nlrha/site_hazard.json).",
+          "options": [
+            {
+              "value": "",
+              "label": "Code: 1.5 × the package's design spectrum (16.2.1.1)"
+            },
+            {
+              "value": "mcer",
+              "label": "Site-specific multi-period MCE_R (USGS)"
+            },
+            {
+              "value": "cs",
+              "label": "Conditional spectrum at T* (16.2.1.2)"
+            }
+          ]
+        },
+        {
+          "id": "records_set",
+          "type": "text",
+          "label": "Record library folder(s)",
+          "arg": "--records-set",
+          "placeholder": "C:\\records\\peer_set  D:\\pulse_records",
+          "help": "Folders of PEER .AT2 or CSV pairs, separated by spaces, added to (or replacing) the shipped FEMA P-695 far-field set. A folder without index.json is indexed on the fly (PEER _SearchResults.csv metadata is read when present)."
+        },
+        {
+          "id": "pulse_fraction",
+          "type": "number",
+          "label": "Pulse-type share",
+          "arg": "--pulse-fraction",
+          "help": "Share of the suite reserved for records flagged pulse in their index. Empty = the near-fault screen of the site hazard (else 0)."
+        },
+        {
+          "id": "sf_bounds",
+          "type": "text",
+          "label": "Scale-factor band",
+          "arg": "--sf-bounds",
+          "placeholder": "0.25-4",
+          "help": "Keep only records whose shape-fit factor lies in this band."
+        },
+        {
+          "id": "dt",
+          "type": "number",
+          "label": "Time step (s)",
+          "arg": "--dt",
+          "default": 0.01
+        },
+        {
+          "id": "integrator",
+          "type": "select",
+          "label": "Integrator",
+          "arg": "--integrator",
+          "default": "hht",
+          "options": [
+            {
+              "value": "hht",
+              "label": "HHT"
+            },
+            {
+              "value": "newmark",
+              "label": "Newmark"
+            }
+          ]
+        },
+        {
+          "id": "plasticity",
+          "type": "select",
+          "label": "Plasticity",
+          "arg": "--plasticity",
+          "default": "",
+          "help": "Product default: fibre for NSP, ModIMK for NLRHA.",
+          "options": [
+            {
+              "value": "",
+              "label": "Product default"
+            },
+            {
+              "value": "fibre",
+              "label": "Fibre"
+            },
+            {
+              "value": "imk",
+              "label": "ModIMK"
+            }
+          ]
+        },
+        {
+          "id": "member_nseg",
+          "type": "number",
+          "label": "Member subdivisions",
+          "arg": "--member-nseg",
+          "help": "Default 4 for fibre, 1 for ModIMK."
+        },
+        {
+          "id": "tail",
+          "type": "select",
+          "label": "Tail protocol",
+          "arg": "--tail",
+          "default": "",
+          "options": [
+            {
+              "value": "",
+              "label": "Default"
+            },
+            {
+              "value": "auto",
+              "label": "Auto"
+            },
+            {
+              "value": "fine_step",
+              "label": "Fine step"
+            },
+            {
+              "value": "arclength",
+              "label": "Arc length"
+            },
+            {
+              "value": "none",
+              "label": "None"
+            }
+          ]
+        },
+        {
+          "id": "post_cap_ratio",
+          "type": "number",
+          "label": "Post-capping ratio",
+          "arg": "--post-cap-ratio",
+          "help": "Tail-protocol rung 3 (a disclosed modelling change). Leave empty for the default."
+        },
+        {
+          "id": "parallel",
+          "type": "number",
+          "label": "Parallel workers",
+          "arg": "--parallel",
+          "default": 2
+        },
+        {
+          "id": "no_block",
+          "type": "checkbox",
+          "label": "DDM: do not write the ddm_analysis block into calc_package.json",
+          "arg": "--no-block",
+          "arg_style": "flag-if-true"
+        },
+        {
+          "id": "no_criteria",
+          "type": "checkbox",
+          "label": "Skip the §16.1.4 design criteria draft",
+          "arg": "--no-criteria",
+          "arg_style": "flag-if-true"
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Four analyses",
+          "path": "four_analyses.html",
+          "accent": "#ff8a3d"
+        },
+        {
+          "label": "Viewer bundle",
+          "path": "steltic_viewer_bundle.html",
+          "accent": "#ffa15c"
+        },
+        {
+          "label": "Pushover report",
+          "path": "pushover/pushover_report.html",
+          "accent": "#ff8a3d"
+        },
+        {
+          "label": "NLRHA report",
+          "path": "nlrha/nlrha_report.html",
+          "accent": "#3fc1a0"
+        },
+        {
+          "label": "DDM report",
+          "path": "ddm_report.html",
+          "accent": "#e0b341"
+        },
+        {
+          "label": "Run log",
+          "path": "snl_run.log",
+          "accent": "#a89f92"
+        },
+        {
+          "label": "Design criteria §16.1.4",
+          "path": "design_criteria_16_1_4.html",
+          "accent": "#ffb070"
+        },
+        {
+          "label": "Design criteria (.docx)",
+          "path": "design_criteria_16_1_4.docx",
+          "accent": "#ffb070"
+        }
+      ]
+    },
+    {
+      "id": "feedback",
+      "title": "Feedback",
+      "kind": "embed",
+      "src": "/?project={job}",
+      "blurb": "Once the Chapter 16 run is complete: what the analyses measured, three loops back to HR Steel (design drift to the measured response under §16.1.2, resize by system role, mechanism shaping through SCWB and panel zones), the re-design streamed live, the verification, and one button to make a verified candidate the design of record."
+    },
+    {
+      "id": "hazard",
+      "title": "Site hazard",
+      "kind": "form",
+      "blurb": "Site-specific hazard for the Chapter 16 suite: the USGS ASCE 7-22 multi-period MCE_R spectrum, the USGS NSHM disaggregation at the conditioning period (mean M, R, ε and the contributing faults), conditional spectra, a near-fault screen with the pulse share it implies. Writes nlrha/site_hazard.json + site_hazard.html; then choose a site-specific target on the Run tab. Needs internet access to earthquake.usgs.gov (about a minute).",
+      "run": {
+        "kind": "cli",
+        "cwd": "{job_dir}",
+        "label": "Fetch site hazard",
+        "command": [
+          "-m",
+          "nlrha",
+          "hazard",
+          "{job_dir}"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        },
+        {
+          "id": "lat",
+          "type": "number",
+          "label": "Latitude",
+          "arg": "--lat",
+          "required": true
+        },
+        {
+          "id": "lon",
+          "type": "number",
+          "label": "Longitude",
+          "arg": "--lon",
+          "required": true,
+          "help": "Negative west of Greenwich (e.g. -118.25)."
+        },
+        {
+          "id": "site_class",
+          "type": "select",
+          "label": "Site class",
+          "arg": "--site-class",
+          "default": "D",
+          "options": [
+            {
+              "value": "A",
+              "label": "A"
+            },
+            {
+              "value": "B",
+              "label": "B"
+            },
+            {
+              "value": "BC",
+              "label": "BC"
+            },
+            {
+              "value": "C",
+              "label": "C"
+            },
+            {
+              "value": "CD",
+              "label": "CD"
+            },
+            {
+              "value": "D",
+              "label": "D"
+            },
+            {
+              "value": "DE",
+              "label": "DE"
+            },
+            {
+              "value": "E",
+              "label": "E"
+            }
+          ]
+        },
+        {
+          "id": "risk_category",
+          "type": "select",
+          "label": "Risk category",
+          "arg": "--risk-category",
+          "default": "",
+          "options": [
+            {
+              "value": "",
+              "label": "From the package"
+            },
+            {
+              "value": "I",
+              "label": "I"
+            },
+            {
+              "value": "II",
+              "label": "II"
+            },
+            {
+              "value": "III",
+              "label": "III"
+            },
+            {
+              "value": "IV",
+              "label": "IV"
+            }
+          ]
+        },
+        {
+          "id": "vs30",
+          "type": "number",
+          "label": "Vs30 (m/s)",
+          "arg": "--vs30",
+          "help": "For the disaggregation. Empty = the USGS value for the site class."
+        },
+        {
+          "id": "return_period",
+          "type": "number",
+          "label": "Disaggregation return period (yr)",
+          "arg": "--return-period",
+          "default": 2475
+        },
+        {
+          "id": "cs_period",
+          "type": "text",
+          "label": "Conditioning period(s) T* (s)",
+          "arg": "--cs-period",
+          "placeholder": "1.0 0.3",
+          "help": "Empty = the longer first-mode period of the hinge model. Several, separated by spaces, give several conditional spectra (16.2.1.2 envelope)."
+        },
+        {
+          "id": "t1",
+          "type": "number",
+          "label": "First-mode period override (s)",
+          "arg": "--t1",
+          "help": "Skips the model build; otherwise the hinge model's eigenvalues are used."
+        },
+        {
+          "id": "params",
+          "type": "file",
+          "label": "Job hinge parameters",
+          "accept": ".json",
+          "arg": "--params"
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Site hazard",
+          "path": "nlrha/site_hazard.html",
+          "accent": "#3fc1a0"
+        },
+        {
+          "label": "site_hazard.json",
+          "path": "nlrha/site_hazard.json",
+          "accent": "#a89f92"
+        }
+      ]
+    },
+    {
+      "id": "criteria",
+      "title": "Design criteria",
+      "kind": "form",
+      "blurb": "Draft the ASCE 7-22 §16.1.4 design criteria document from the package and whatever analyses exist (site hazard, selected suite, results): hazard, ground motions, modelling, acceptance criteria, the linear basis, the §16.5 review scope, open items, the retrieval log. Word (.docx) for mark-up and HTML for the hub. Also written at the end of every Run.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{job_dir}",
+        "label": "Draft design criteria",
+        "command": [
+          "-m",
+          "nlrha",
+          "criteria",
+          "{job_dir}"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        },
+        {
+          "id": "project",
+          "type": "text",
+          "label": "Project name / address",
+          "arg": "--project"
+        },
+        {
+          "id": "engineer",
+          "type": "text",
+          "label": "Engineer of record",
+          "arg": "--engineer"
+        },
+        {
+          "id": "reviewer",
+          "type": "text",
+          "label": "Independent reviewer (§16.5)",
+          "arg": "--reviewer"
+        },
+        {
+          "id": "params",
+          "type": "file",
+          "label": "Job hinge parameters",
+          "accept": ".json",
+          "arg": "--params"
+        },
+        {
+          "id": "risk_category",
+          "type": "select",
+          "label": "Risk category",
+          "arg": "--risk-category",
+          "default": "",
+          "options": [
+            {
+              "value": "",
+              "label": "From the package"
+            },
+            {
+              "value": "I",
+              "label": "I"
+            },
+            {
+              "value": "II",
+              "label": "II"
+            },
+            {
+              "value": "III",
+              "label": "III"
+            },
+            {
+              "value": "IV",
+              "label": "IV"
+            }
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Design criteria §16.1.4",
+          "path": "design_criteria_16_1_4.html",
+          "accent": "#ffb070"
+        },
+        {
+          "label": "Design criteria (.docx)",
+          "path": "design_criteria_16_1_4.docx",
+          "accent": "#ffb070"
+        }
+      ]
+    },
+    {
+      "id": "inspect",
+      "title": "Inspect",
+      "kind": "form",
+      "blurb": "Read the design basis out of a package without running anything. The package is copied into the project folder first.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{job_dir}",
+        "label": "Inspect package",
+        "stage": [
+          {
+            "from": "{f.package}",
+            "to": "{job_dir}",
+            "required": true,
+            "label": "design package",
+            "missing": "No design package for this project: run HR Steel on it first, or choose the .zip HR Steel produced."
+          }
+        ],
+        "command": [
+          "-m",
+          "snl",
+          "inspect",
+          "{job_dir}"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        },
+        {
+          "id": "package",
+          "type": "file",
+          "label": "Design package",
+          "accept": ".zip",
+          "default": "{out.steltic}",
+          "placeholder": "this project's HR Steel design (automatic)"
+        }
+      ]
+    },
+    {
+      "id": "compare",
+      "title": "Compare",
+      "kind": "form",
+      "blurb": "Rebuild four_analyses.html and the viewer hub from whatever outputs already exist. No analysis runs.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{job_dir}",
+        "label": "Rebuild comparison",
+        "command": [
+          "-m",
+          "snl",
+          "report",
+          "{job_dir}"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Four analyses",
+          "path": "four_analyses.html",
+          "accent": "#ff8a3d"
+        },
+        {
+          "label": "Viewer bundle",
+          "path": "steltic_viewer_bundle.html",
+          "accent": "#ffa15c"
+        },
+        {
+          "label": "Summary JSON",
+          "path": "snl_summary.json",
+          "accent": "#a89f92"
+        }
+      ]
+    },
+    {
+      "id": "mesh",
+      "title": "Mesh convergence",
+      "kind": "form",
+      "blurb": "Fibre mesh ladder with a relative stop band (product default 10%). Runs on the design package already in this project folder.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{job_dir}",
+        "label": "Run ladder",
+        "command": [
+          "-m",
+          "snl",
+          "mesh-converge",
+          "{job_dir}",
+          "--out",
+          "{job_dir}",
+          "--steltic-engine",
+          "{need.steltic}/steel_engine"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        },
+        {
+          "id": "analyses",
+          "type": "select",
+          "label": "Analyses",
+          "arg": "--analyses",
+          "default": "",
+          "options": [
+            {
+              "value": "",
+              "label": "NSP + NLRHA + DDM"
+            },
+            {
+              "value": "nsp",
+              "label": "NSP only"
+            },
+            {
+              "value": "nlrha",
+              "label": "NLRHA only"
+            },
+            {
+              "value": "ddm",
+              "label": "DDM only"
+            }
+          ]
+        },
+        {
+          "id": "params",
+          "type": "file",
+          "label": "Job hinge parameters",
+          "accept": ".json",
+          "arg": "--params"
+        },
+        {
+          "id": "tol",
+          "type": "number",
+          "label": "Stop band",
+          "arg": "--tol",
+          "default": 0.1
+        },
+        {
+          "id": "max_rungs",
+          "type": "number",
+          "label": "Max rungs",
+          "arg": "--max-rungs",
+          "default": 4
+        },
+        {
+          "id": "risk_category",
+          "type": "select",
+          "label": "Risk category",
+          "arg": "--risk-category",
+          "default": "",
+          "options": [
+            {
+              "value": "",
+              "label": "From the package"
+            },
+            {
+              "value": "I",
+              "label": "I"
+            },
+            {
+              "value": "II",
+              "label": "II"
+            },
+            {
+              "value": "III",
+              "label": "III"
+            },
+            {
+              "value": "IV",
+              "label": "IV"
+            }
+          ]
+        },
+        {
+          "id": "site_class",
+          "type": "select",
+          "label": "Site class",
+          "arg": "--site-class",
+          "default": "D",
+          "options": [
+            {
+              "value": "A",
+              "label": "A"
+            },
+            {
+              "value": "B",
+              "label": "B"
+            },
+            {
+              "value": "C",
+              "label": "C"
+            },
+            {
+              "value": "D",
+              "label": "D"
+            },
+            {
+              "value": "E",
+              "label": "E"
+            }
+          ]
+        },
+        {
+          "id": "n_records",
+          "type": "number",
+          "label": "Ground-motion records",
+          "arg": "--n-records",
+          "default": 11
+        },
+        {
+          "id": "parallel",
+          "type": "number",
+          "label": "Parallel workers",
+          "arg": "--parallel",
+          "default": 1
+        },
+        {
+          "id": "dt",
+          "type": "number",
+          "label": "Time step (s)",
+          "arg": "--dt",
+          "default": 0.01
+        },
+        {
+          "id": "early_abort_nc",
+          "type": "number",
+          "label": "NLRHA early abort after N NC records",
+          "arg": "--early-abort-nc",
+          "default": 2
+        },
+        {
+          "id": "dry_run",
+          "type": "checkbox",
+          "label": "Plan only (no OpenSees)",
+          "arg": "--dry-run",
+          "arg_style": "flag-if-true"
+        }
+      ]
+    },
+    {
+      "id": "viewers",
+      "title": "Viewers",
+      "kind": "viewers",
+      "blurb": "Steltic · Pushover · NLRHA · DDM — greyed where the sibling file is not in this project yet."
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "kind": "files"
+    }
+  ],
+  "server": {
+    "command": [
+      "-m",
+      "uvicorn",
+      "snl.loop_server:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "{port}"
+    ],
+    "health": "/healthz",
+    "cwd": "{module_dir}",
+    "requires": [
+      "steltic"
+    ]
+  }
+}

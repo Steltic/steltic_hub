@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+tauri/src-tauri/target/
+tauri/dist/
+selftest-data/
+selftest-report.txt
+.devdata/
+.pytest_cache/
+# round-by-round hand-off material and the patch series for the MODULE repos: not hub source
+patches/
+Claude outputs/
+*.zip
+*.bundle
+CHANGED_FILES.txt

@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "id": "steltic_variations",
+  "name": "Design variations",
+  "blurb": "Plan N design variations of a brief, have HR Steel design each one, read the metrics out of the packages, apply an eligibility rule and a score, rank them and record your selection for the other modules.",
+  "accent": "#ffc078",
+  "order": 25,
+  "homepage": "https://github.com/Steltic/steltic_hub",
+  "source": {
+    "bundled": "steltic_variations",
+    "url": "https://github.com/Steltic/steltic_hub"
+  },
+  "env": {
+    "python": "3.12",
+    "install": ["-r", "requirements.txt"]
+  },
+  "env_vars": {
+    "STELTIC_URL": "{server.steltic}",
+    "VARIATIONS_JOBS": "{jobs_dir}"
+  },
+  "credentials": {
+    "path": "/api/creds",
+    "method": "POST"
+  },
+  "server": {
+    "command": ["-m", "uvicorn", "variations.main:app", "--host", "127.0.0.1", "--port", "{port}"],
+    "health": "/healthz",
+    "cwd": "{module_dir}",
+    "requires": ["steltic"]
+  },
+  "output": {
+    "root": "{job_dir}/variations"
+  },
+  "tabs": [
+    {
+      "id": "study",
+      "title": "Variations",
+      "kind": "embed",
+      "src": "/?project={job}",
+      "blurb": "Base brief → variation list (pick categories, describe the study, or let the model decide) → HR Steel designs each one → eligibility + score → sortable results → record your selection. Everything is saved in this project's folder under variations/."
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "kind": "files"
+    }
+  ]
+}

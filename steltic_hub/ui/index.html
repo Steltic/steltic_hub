@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steltic</title>
+<link rel="stylesheet" href="/static/styles.css?v=5">
+</head>
+<body>
+
+<div id="bar">
+  <span class="brand">Steltic <b>Hub</b></span>
+  <span class="chip ok" id="projectChip" title="Active project — every module reads and writes this folder">Project…</span>
+  <span class="sp"></span>
+  <span class="barnote" id="barnote"></span>
+  <span class="chip ok" id="connChip" title="Your LLM connection — held in memory, never written to disk">Connection</span>
+  <span class="chip ok" id="modulesChip" title="Install, update and add modules">Modules</span>
+</div>
+
+<div id="rail">
+  <div class="railhead">Modules</div>
+  <div id="modlist"></div>
+  <div class="railhead">Workspace</div>
+  <div class="mod" data-special="jobs" style="--c:#a89f92">
+    <span class="dot"></span><span class="t"><span class="n">Projects</span><span class="s">all job folders</span></span>
+  </div>
+  <div class="mod" data-special="modules" style="--c:#e0a878">
+    <span class="dot"></span><span class="t"><span class="n">Modules</span><span class="s">install · update · add</span></span>
+  </div>
+</div>
+
+<div id="main">
+  <div id="tabs"></div>
+  <div id="body"><div class="pane"><p class="blurb">Loading…</p></div></div>
+</div>
+
+<div id="modal"><div class="sheet" id="sheet"></div></div>
+<div id="toast"></div>
+
+<script src="/static/app.js?v=5"></script>
+</body>
+</html>

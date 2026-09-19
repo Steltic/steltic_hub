@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "steltic_admin",
+  "name": "Admin",
+  "blurb": "Runs the other modules for you: batch plans across projects (J1 → HR Steel → Nonlinear, then J2 → CFS …) with every run monitored and logged, a queue that converts a folder of specification PDFs through the Query file manager one after another, and a help desk that answers questions about how Steltic works from the code and docs on this PC or on GitHub.",
+  "accent": "#9fb4d6",
+  "order": 5,
+  "homepage": "https://github.com/Steltic/steltic_hub",
+  "source": {
+    "bundled": "steltic_admin",
+    "url": "https://github.com/Steltic/steltic_hub"
+  },
+  "env": {
+    "python": "3.12",
+    "install": ["-r", "requirements.txt"]
+  },
+  "env_vars": {
+    "HUB_URL": "{hub_url}",
+    "HUB_DATA": "{data_dir}",
+    "HUB_JOBS": "{jobs_dir}",
+    "HUB_CATALOG": "{catalog_dir}",
+    "ADMIN_DATA": "{data_dir}/admin"
+  },
+  "credentials": {
+    "path": "/api/creds",
+    "method": "POST"
+  },
+  "server": {
+    "command": ["-m", "uvicorn", "admin.main:app", "--host", "127.0.0.1", "--port", "{port}"],
+    "health": "/healthz",
+    "cwd": "{module_dir}"
+  },
+  "output": {
+    "root": "{data_dir}/admin"
+  },
+  "tabs": [
+    {
+      "id": "batch",
+      "title": "Batch",
+      "kind": "embed",
+      "src": "/#batch",
+      "blurb": "Tell Admin what to run — “J1 to hr then nl, then J2 to cfs, then J3 to hr” — check the plan it makes, start it, and watch each run as it happens. Plans, logs and results are kept under admin/ in the data folder and survive a restart."
+    },
+    {
+      "id": "standards",
+      "title": "Standards",
+      "kind": "embed",
+      "src": "/#standards",
+      "blurb": "Point Admin at the folder holding your licensed specification PDFs. It works out each one's canonical stem, skips the ones already converted, and queues the rest through the Query file manager's converter one after another (hours each), then rebuilds and audits the index."
+    },
+    {
+      "id": "help",
+      "title": "Help",
+      "kind": "embed",
+      "src": "/#help",
+      "blurb": "Ask how Steltic works. Admin searches the hub's own source, the module checkouts on this PC (READMEs, contracts, skills, code) and, when asked, the public GitHub repos, and answers with the passages it used."
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "kind": "files"
+    }
+  ]
+}
