@@ -310,7 +310,8 @@
           "building": "{job}",
           "brief": "{f.brief}",
           "resume": true
-        }
+        },
+        "continues": "design"
       },
       "fields": [
         {

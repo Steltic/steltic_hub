@@ -11,6 +11,18 @@ every change) and logs/<id>/<n>.log (one per step). A restart of Admin's server 
 was running, marks it `interrupted`, and waits for the user to press Resume -- it never re-launches
 a run on its own, because the run it was watching may still be going on the module server.
 
+A step is not one run. A design that was stopped, that died when the model server went away, or
+that paused itself (HR Steel's loop guard, an empty turn) has hours of work saved in the project,
+and the module says which tab picks that up: `run.continues` in its manifest (HR Steel's and CFS's
+Continue resume a Design from conversation.json). So a step whose run ended that way is continued
+through that tab -- on Resume, and on its own:
+    the model server or the hub unreachable / timed out  -> wait for it, as long as it takes
+                                                            (plan option wait_for_llm, on by default;
+                                                            Stop ends the wait), then continue
+    paused, or an error a Continue may heal               -> continue, plan option auto_continue times
+    an error nothing will heal (call budget, bad config)  -> failed, the step's on_fail decides
+A step of a module without such a tab is run again from the start after a wait, never continued.
+
 Field values may say where to get the value rather than what it is:
     @project            the project's brief.md / brief.txt (design steps default to this)
     @file:<name>        a file in the project folder -- its text for a text field, its path otherwise
@@ -25,6 +37,39 @@ PLAN_STATUS = ("draft", "running", "done", "failed", "stopped", "interrupted")
 ON_FAIL = ("stop", "skip_project", "continue")
 TEXT_FIELDS = ("text", "textarea")
 BRIEF_NAMES = ("brief.md", "brief.txt", "brief.markdown", "BRIEF.md", "Brief.md")
+OPTIONS = {"wait_for_llm": True, "auto_continue": 3}
+WAIT_CHECK = 30.0            # seconds between checks while waiting for the model server / the hub
+WAIT_FLOOR = (30, 60, 120, 300)   # the least a wait lasts, by how many waits this step has already had (last value repeats)
+
+# What a failed run's text says about what to do next. Order matters: FINAL is looked at first.
+_FINAL = re.compile(r"max steps reached|call budget reached|refused the run \((?:400|401|403|404|409|422)\)"
+                    r"|is not installed|cannot start|nothing to run|unknown tool|no such (?:plan|tab|module)", re.I)
+_TRANSIENT = re.compile(r"LLM API (?:408|429|5\d\d)|refused the run \((?:429|502|503|504)\)|time[d]? ?out|timeout"
+                        r"|Connect(?:Error|Timeout)|Read(?:Timeout|Error)|WriteError|PoolTimeout|RemoteProtocolError"
+                        r"|Connection (?:refused|reset|aborted)|connection reset|peer closed|server disconnected|Server disconnected"
+                        r"|did not answer|lost the hub's stream|stream ended without a done event|not reachable|unreachable"
+                        r"|could not (?:connect|reach)|Temporary failure|Name or service not known|getaddrinfo|Errno 111|Errno 104"
+                        r"|WinError 1005[34]|WinError 10061|actively refused|RAG (?:API|server)|standards server|rag_unavailable"
+                        r"|overloaded|rate limit|try again later|Service Unavailable|Bad Gateway|Gateway Time", re.I)
+_NOTHING_SAVED = re.compile(r"refused the run \(409\).*nothing to resume", re.I | re.S)
+_STOPPED_BY_USER = re.compile(r"stopped by user|client disconnected", re.I)
+
+
+def classify(outcome: dict) -> str:
+    """What a run that did not finish tells us to do: `transient` (the server went away: wait, carry on),
+    `paused` (the module saved its state and asks for Continue), `retryable` (an error a Continue may
+    heal -- a provider 400 on a turn HR Steel now repairs, a tool crash), `final` (nothing will heal it)."""
+    errors = [str(e) for e in (outcome.get("errors") or [])]
+    joined = "\n".join(errors)
+    if errors:
+        if _FINAL.search(joined):
+            return "final"
+        if _TRANSIENT.search(joined):
+            return "transient"
+        return "retryable"
+    if outcome.get("paused"):
+        return "transient" if _TRANSIENT.search(str(outcome["paused"])) else "paused"
+    return "retryable"
 
 
 def clean_name(s: str) -> str:
@@ -32,10 +77,23 @@ def clean_name(s: str) -> str:
     return s or "Project"
 
 
-def new_plan(title: str, steps: list[dict], source: str = "") -> dict:
+def normalise_options(o) -> dict:
+    out = dict(OPTIONS)
+    if isinstance(o, dict):
+        if "wait_for_llm" in o:
+            out["wait_for_llm"] = bool(o["wait_for_llm"])
+        try:
+            out["auto_continue"] = max(0, min(int(o.get("auto_continue", out["auto_continue"])), 50))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def new_plan(title: str, steps: list[dict], source: str = "", options: dict | None = None) -> dict:
     return {"id": time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4], "title": title or "Plan",
             "source": source, "created": time.time(), "updated": time.time(), "status": "draft",
-            "note": "", "steps": [normalise_step(s, i + 1) for i, s in enumerate(steps)]}
+            "note": "", "options": normalise_options(options),
+            "steps": [normalise_step(s, i + 1) for i, s in enumerate(steps)]}
 
 
 def normalise_step(s: dict, n: int) -> dict:
@@ -51,7 +109,13 @@ def normalise_step(s: dict, n: int) -> dict:
             "status": s.get("status") if s.get("status") in STEP_STATUS else "pending",
             "run_id": s.get("run_id"), "started": s.get("started"), "ended": s.get("ended"),
             "ok": s.get("ok"), "rc": s.get("rc"), "attempts": s.get("attempts") or 0,
-            "note": str(s.get("note") or ""), "artifacts": s.get("artifacts") or []}
+            "note": str(s.get("note") or ""), "artifacts": s.get("artifacts") or [],
+            # the step has saved progress on its module: run the tab that continues it, not the tab itself
+            "resume": bool(s.get("resume")),
+            # what actually ran last (the step's tab, or the tab that continues it)
+            "ran_tab": s.get("ran_tab"),
+            # how often Admin carried this step on by itself: waits for the server, and continues after a pause / error
+            "waited": int(s.get("waited") or 0), "continued": int(s.get("continued") or 0)}
 
 
 class Store:
@@ -128,6 +192,11 @@ class Store:
         return "\n".join(txt.splitlines()[-lines:])
 
 
+def _default_probe():
+    from . import llm
+    return llm.probe()
+
+
 def summary(d: dict) -> dict:
     steps = d.get("steps") or []
     counts = {k: 0 for k in STEP_STATUS}
@@ -140,10 +209,13 @@ def summary(d: dict) -> dict:
 
 # ---------------------------------------------------------------- the executor
 class Executor:
-    def __init__(self, hub: HubClient, store: Store, jobs_dir: pathlib.Path):
+    def __init__(self, hub: HubClient, store: Store, jobs_dir: pathlib.Path, probe=None):
         self.hub = hub
         self.store = store
         self.jobs = jobs_dir
+        # probe() -> True (the model server answers), False (it does not), None (Admin holds no connection
+        # to ask with). The default asks the connection the hub pushed to /api/creds; tests hand in their own.
+        self.probe = probe or _default_probe
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._running: str | None = None            # plan id
@@ -284,7 +356,9 @@ class Executor:
         raise RuntimeError(f"unknown source {v!r}")
 
     # ---------- lifecycle
-    def start(self, plan_id: str, retry_failed: bool = False) -> dict:
+    def start(self, plan_id: str, retry_failed: bool = False, fresh: bool = False) -> dict:
+        """Start, or resume. A stopped / failed step that got as far as a run on its module keeps `resume`,
+        so it is continued from the state the module saved rather than started over -- unless `fresh`."""
         with self._lock:
             if self.running:
                 raise RuntimeError(f"plan {self.running} is running -- one plan at a time (stop it, or wait)")
@@ -294,11 +368,14 @@ class Executor:
             errors, _ = self.validate(plan)
             if errors:
                 raise RuntimeError("the plan cannot start:\n- " + "\n- ".join(errors))
+            plan["options"] = normalise_options(plan.get("options"))
             for st in plan["steps"]:
                 if st["status"] in ("stopped", "skipped") or (retry_failed and st["status"] == "failed"):
-                    st.update(status="pending", note="", run_id=None, started=None, ended=None, ok=None, rc=None)
+                    had_run = st["status"] != "skipped" and bool(st.get("run_id"))
+                    st.update(status="pending", note="", started=None, ended=None, ok=None, rc=None,
+                              resume=bool(had_run and not fresh), continued=0, waited=0)
                 elif st["status"] == "running":
-                    st.update(status="pending", note="")
+                    st.update(status="pending", note="", resume=bool(st.get("run_id")) and not fresh)
             if not any(st["status"] == "pending" for st in plan["steps"]):
                 raise RuntimeError("nothing left to run (every step is done or failed -- Resume with retry to run failed steps again)")
             plan["status"] = "running"; plan["note"] = ""
@@ -331,6 +408,7 @@ class Executor:
 
     def _run_steps(self, plan_id: str):
         plan = self.store.load(plan_id)
+        plan["options"] = normalise_options(plan.get("options"))
         state = self.hub.state()
         mods = {m["id"]: m for m in state.get("modules") or []}
         skip_projects: set[str] = set()
@@ -342,44 +420,9 @@ class Executor:
                 continue
             if st["project"] in skip_projects:
                 st.update(status="skipped", note="an earlier step of this project failed"); self.store.save(plan); continue
-            m = mods.get(st["module"]) or {}
-            tab = next((t for t in m.get("tabs") or [] if t["id"] == st["tab"]), {})
             log = self.store.log_path(plan_id, st["n"])
-            st.update(status="running", started=time.time(), ended=None, note="", run_id=None, ok=None, rc=None)
-            self.store.save(plan)
             with open(log, "a", encoding="utf-8", errors="replace") as lf:
-                writer = _LogWriter(lf)
-                writer.line(f"=== {time.ctime()} :: {st['project']} -> {m.get('name', st['module'])} / {tab.get('title', st['tab'])} ===")
-                try:
-                    project = self.hub.create_project(st["project"])
-                    fields = self.resolve_fields(st, tab)
-                    for k, v in fields.items():
-                        shown = (v if isinstance(v, str) else json.dumps(v))
-                        writer.line(f"[admin] {k} = {shown[:160]!r}{' …' if isinstance(shown, str) and len(shown) > 160 else ''}")
-                    outcome = self.hub.run(st["module"], st["tab"], project, fields,
-                                           on_event=lambda ev: self._on_event(plan, st, ev, writer),
-                                           should_stop=lambda: plan_id in self._stop_flag)
-                except HubError as e:
-                    outcome = {"ok": False, "rc": None, "cancelled": False, "errors": [str(e)], "artifacts": [], "attempts": 1, "run_id": None}
-                    writer.line(f"✖ {e}")
-                except Exception as e:
-                    outcome = {"ok": False, "rc": None, "cancelled": False, "errors": [f"{type(e).__name__}: {e}"], "artifacts": [], "attempts": 1, "run_id": None}
-                    writer.line(f"✖ {type(e).__name__}: {e}")
-                writer.flush_tokens()
-                self._current_run.pop(plan_id, None)
-                st.update(ended=time.time(), ok=bool(outcome.get("ok")), rc=outcome.get("rc"),
-                          attempts=outcome.get("attempts") or 1, artifacts=outcome.get("artifacts") or [],
-                          run_id=outcome.get("run_id") or st.get("run_id"))
-                if outcome.get("cancelled"):
-                    st["status"] = "stopped"; st["note"] = "stopped"
-                    writer.line("■ stopped")
-                elif outcome.get("ok"):
-                    st["status"] = "done"
-                    writer.line("✓ done")
-                else:
-                    st["status"] = "failed"
-                    st["note"] = "; ".join(outcome.get("errors") or []) or (f"exit {outcome.get('rc')}" if outcome.get("rc") is not None else "failed")
-                    writer.line(f"✖ failed: {st['note']}")
+                self._run_step(plan, st, mods, _LogWriter(lf))
             self.store.save(plan)
             if st["status"] == "stopped":
                 final = "stopped"; break
@@ -401,6 +444,127 @@ class Executor:
             bad = [f"step {s['n']} ({s['project']} → {s['module']}/{s['tab']}): {s['note']}" for s in plan["steps"] if s["status"] == "failed"]
             plan["note"] = "\n".join(bad)
         self.store.save(plan)
+
+    # ---------- one step, to its end
+    def _run_step(self, plan: dict, st: dict, mods: dict, writer: "_LogWriter"):
+        """The step's run, and every continuation Admin makes on its own (see the module docstring).
+        Leaves st["status"] as done / failed / stopped."""
+        plan_id = plan["id"]
+        opts = plan.get("options") or OPTIONS
+        m = mods.get(st["module"]) or {}
+        tabs = {t["id"]: t for t in m.get("tabs") or []}
+        tab = tabs.get(st["tab"]) or {}
+        cont_id = next((tid for tid, t in tabs.items() if (t.get("run") or {}).get("continues") == st["tab"]), None)
+        started_over = False
+        st.update(status="running", started=time.time(), ended=None, note="", ok=None, rc=None)
+        if not cont_id:
+            st["resume"] = False                       # nothing on this module continues a run: every run is a fresh one
+        while True:
+            use_cont = bool(st.get("resume")) and cont_id is not None
+            run_tab = tabs[cont_id] if use_cont else tab
+            run_tab_id = cont_id if use_cont else st["tab"]
+            st["ran_tab"] = run_tab_id
+            st["note"] = "continuing from where it stopped" if use_cont else ""
+            self.store.save(plan)
+            writer.line(f"=== {time.ctime()} :: {st['project']} -> {m.get('name', st['module'])} / {run_tab.get('title', run_tab_id)}"
+                        f"{' (continues the ' + tab.get('title', st['tab']) + ' run from where it stopped)' if use_cont else ''} ===")
+            try:
+                project = self.hub.create_project(st["project"])
+                fields = {} if use_cont else self.resolve_fields(st, tab)   # a continuation with no fields is a plain resume
+                for k, v in fields.items():
+                    shown = (v if isinstance(v, str) else json.dumps(v))
+                    writer.line(f"[admin] {k} = {shown[:160]!r}{' …' if isinstance(shown, str) and len(shown) > 160 else ''}")
+                outcome = self.hub.run(st["module"], run_tab_id, project, fields,
+                                       on_event=lambda ev: self._on_event(plan, st, ev, writer),
+                                       should_stop=lambda: plan_id in self._stop_flag)
+            except HubError as e:
+                outcome = {"ok": False, "rc": None, "cancelled": False, "errors": [str(e)], "artifacts": [], "attempts": 1, "run_id": None}
+                writer.line(f"✖ {e}")
+            except Exception as e:
+                outcome = {"ok": False, "rc": None, "cancelled": False, "errors": [f"{type(e).__name__}: {e}"], "artifacts": [], "attempts": 1, "run_id": None}
+                writer.line(f"✖ {type(e).__name__}: {e}")
+            writer.flush_tokens()
+            self._current_run.pop(plan_id, None)
+            st.update(ended=time.time(), ok=bool(outcome.get("ok")), rc=outcome.get("rc"),
+                      attempts=outcome.get("attempts") or 1, artifacts=outcome.get("artifacts") or [],
+                      run_id=outcome.get("run_id") or st.get("run_id"))
+            can_continue = cont_id is not None and bool(st.get("run_id"))
+            if outcome.get("cancelled") or (outcome.get("paused") and _STOPPED_BY_USER.search(str(outcome["paused"]))):
+                st["status"] = "stopped"; st["resume"] = can_continue
+                st["note"] = "stopped -- Resume continues it from where it stopped" if can_continue else "stopped"
+                writer.line("■ stopped" + (" (progress is saved on the module; Resume continues it)" if can_continue else ""))
+                return
+            if outcome.get("ok"):
+                st["status"] = "done"; st["note"] = ""; st["resume"] = False
+                writer.line("✓ done")
+                return
+            problem = "; ".join(outcome.get("errors") or []) or (("paused: " + str(outcome["paused"])) if outcome.get("paused") else "") \
+                or (f"exit {outcome.get('rc')}" if outcome.get("rc") is not None else "failed")
+            if use_cont and not started_over and _NOTHING_SAVED.search(problem):
+                # the module has nothing to continue from (the run died before its first save): start the step over, once
+                started_over = True
+                st["resume"] = False
+                writer.line("↻ nothing saved on the module to continue from -- starting the step over")
+                continue
+            kind = classify(outcome)
+            if kind == "transient" and opts.get("wait_for_llm", True):
+                st["waited"] = int(st.get("waited") or 0) + 1
+                st["resume"] = can_continue
+                writer.line(f"⏳ {problem}")
+                writer.line(f"⏳ waiting for the {'model server' if 'hub' not in problem.lower() else 'hub'} (wait {st['waited']}; Stop ends it)")
+                if not self._wait_for_server(plan, st, writer, st["waited"]):
+                    st["status"] = "stopped"; st["note"] = "stopped while waiting for the server" + (" -- Resume continues it" if can_continue else "")
+                    writer.line("■ stopped while waiting")
+                    return
+                writer.line("↻ " + ("continuing from where it stopped" if st["resume"] else "running the step again"))
+                st["started"] = st["started"] or time.time()
+                continue
+            limit = int(opts.get("auto_continue", OPTIONS["auto_continue"]))
+            if kind in ("paused", "retryable") and can_continue and int(st.get("continued") or 0) < limit:
+                st["continued"] = int(st.get("continued") or 0) + 1
+                st["resume"] = True
+                writer.line(f"{'⏸' if kind == 'paused' else '✖'} {problem}")
+                writer.line(f"↻ continuing from where it stopped ({st['continued']} of {limit})")
+                self.store.save(plan)
+                time.sleep(2)                          # the module's stop endpoint / gate may still be releasing the run
+                continue
+            st["status"] = "failed"; st["resume"] = can_continue
+            st["note"] = problem + (f" (after {st['continued']} continue{'s' if st['continued'] != 1 else ''})" if st.get("continued") else "")
+            writer.line(f"✖ failed: {st['note']}")
+            return
+
+    def _wait_for_server(self, plan: dict, st: dict, writer: "_LogWriter", nth: int) -> bool:
+        """Block until the hub answers and the model server answers (or Admin cannot ask), and at least
+        WAIT_FLOOR[nth] seconds have passed -- so a server that is up but keeps failing the run is not
+        hammered. Returns False when the user stopped the plan meanwhile."""
+        plan_id = plan["id"]
+        floor = WAIT_FLOOR[min(max(nth, 1), len(WAIT_FLOOR)) - 1]
+        t0 = time.time(); checks = 0; since = time.strftime("%H:%M")
+        while True:
+            if plan_id in self._stop_flag:
+                return False
+            hub_up = self.hub.reachable()
+            llm_up = None
+            if hub_up:
+                try:
+                    llm_up = self.probe()
+                except Exception:                      # noqa: BLE001
+                    llm_up = False
+            checks += 1
+            waited = time.time() - t0
+            if hub_up and llm_up is not False and waited >= floor:
+                st["note"] = ""
+                return True
+            what = "the hub" if not hub_up else ("the model server" if llm_up is False else "the server to settle")
+            st["note"] = f"waiting for {what} since {since} ({int(waited)} s, {checks} check{'s' if checks != 1 else ''}) -- Stop ends the wait"
+            self.store.save(plan)
+            if checks == 1 or checks % 10 == 0:
+                writer.line(f"⏳ {st['note']}")
+            end = time.time() + WAIT_CHECK
+            while time.time() < end:
+                if plan_id in self._stop_flag:
+                    return False
+                time.sleep(1.0)
 
     def _on_event(self, plan: dict, st: dict, ev: dict, writer: "_LogWriter"):
         t = ev.get("type")

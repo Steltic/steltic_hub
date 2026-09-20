@@ -28,6 +28,21 @@ def available() -> bool:
     return bool(_CREDS and _CREDS.get("model") and _CREDS.get("model") != "MOCK" and _CREDS.get("base_url"))
 
 
+def probe(timeout: float = 15.0):
+    """Is the model endpoint answering? True / False, or None when Admin holds no connection to ask with.
+    GET <base_url>/models: every OpenAI-compatible server (OpenRouter, vLLM, llama.cpp, LM Studio,
+    Ollama's /v1) answers it, and anything short of a 5xx or a connection error means the server is
+    there -- a 401 says it is up and the key is the problem, which waiting will not fix."""
+    if not _CREDS or not _CREDS.get("base_url"):
+        return None
+    url = _CREDS["base_url"].rstrip("/") + "/models"
+    try:
+        r = httpx.get(url, headers=_headers(), timeout=httpx.Timeout(timeout, connect=min(10.0, timeout)))
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
 def _headers() -> dict:
     h = {"Content-Type": "application/json", "Authorization": f"Bearer {_CREDS.get('api_key', '')}"}
     if "openrouter" in (_CREDS.get("base_url") or ""):

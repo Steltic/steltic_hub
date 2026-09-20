@@ -53,7 +53,26 @@ While it runs: one step at a time, in a worker thread inside Admin's server; eac
 written to `admin/logs/<plan>/<n>.log`, the step's status, run id, attempts, exit code and
 artifacts to `admin/plans/<plan>.json`. The tab polls and shows the current step's log. **Stop**
 cancels the current run through the hub (`POST /api/cancel`) and ends the plan after it; **Resume**
-runs the steps that are still pending (and, with *retry failed*, the failed ones again).
+runs the steps that are still pending (and, with *retry failed steps*, the failed ones again).
+
+### A step is not one run
+
+A design that was stopped, that died when the model server went away, or that paused itself has
+hours of work saved in the project, and the module says which tab picks that up: `run.continues`
+in its manifest (HR Steel's and CFS's *Continue* resume a *Design* from `conversation.json`, and
+pressing it with no fields is a plain resume). Admin uses it, so a step is continued rather than
+started over:
+
+| what ended the run | what Admin does |
+|---|---|
+| **Stop**, an Admin restart | the step is `stopped`; **Resume** continues it from where it stopped (*start them over* ignores the saved progress) |
+| the model server or the hub unreachable, a timeout, a 5xx / 429, the module's own "LLM call failed" after its retries | **waits for the server** — checks the hub and `GET <base_url>/models` every 30 s, as long as it takes (option `wait_for_llm`, on by default; Stop ends the wait) — then continues; a step whose module has no continuing tab is run again from the start; between attempts at least 30 s, then 60, 120, 300 |
+| the module paused (loop guard, empty turn, no progress), or an error a Continue may heal (a provider 400 on a turn HR Steel now repairs, a tool crash) | continues by itself, `auto_continue` times (default 3), then the step is `failed` |
+| an error nothing will heal (call budget reached, bad key or model, the hub refused the run) | `failed`; the step's `on_fail` decides what the plan does |
+| the module answers a continue with "nothing to resume" (it died before its first save) | the step is started over, once |
+
+The step row shows `↻n` (continued n times) and `⏳n` (waited n times), and `via continue` when the
+last run was the continuing tab. Both options live in the plan's JSON (`options`).
 
 Failure policy per step (`on_fail`): `stop` (default — a failed HR design makes the Nonlinear step
 meaningless), `skip_project` (skip the rest of that project's steps, carry on with other projects),

@@ -258,6 +258,16 @@ class Bridge:
         matched = ""
         hits: list[dict] = []
         target = map_collection(collection)
+        if target is None and collection:
+            # A document the user converted under a stem the fixed table does not know (IS_875_3, an
+            # ASCE 7 converted as ASCE_7_22, ...) is still in the corpus: /healthz lists it under
+            # indexed_docs, so an agent that read /healthz may ask for it by that name.
+            key = collection[len("engineering_standards_"):] if collection.startswith("engineering_standards_") else collection
+            try:
+                if key in self.corpus().doc_meta:
+                    target = ("spec", key)
+            except Exception:
+                pass
         try:
             if target is None:
                 note = f"unknown collection {collection!r}"

@@ -7,7 +7,8 @@ HUB_JOBS (the projects folder), HUB_CATALOG (the hub's bundled manifests and mod
 and pushes the user's LLM connection to /api/creds.
 
 Three jobs:
-  batch      plain-words instruction -> plan -> one hub run after another, watched and logged (plans.py)
+  batch      plain-words instruction -> plan -> one hub run after another, watched and logged (plans.py);
+             a step that stops, times out or pauses is continued from what its module saved
   standards  a folder of specification PDFs -> a conversion queue through the Query file manager (standards.py)
   help       questions about how Steltic works, answered from the code and docs with citations (help.py)
 """
@@ -219,7 +220,7 @@ async def plans_resume(plan_id: str, request: Request):
     except Exception:
         pass
     try:
-        plan = executor.start(plan_id, retry_failed=bool(body.get("retry_failed")))
+        plan = executor.start(plan_id, retry_failed=bool(body.get("retry_failed")), fresh=bool(body.get("fresh")))
     except RuntimeError as e:
         raise HTTPException(409, str(e))
     return {"ok": True, "plan": plan}
@@ -256,7 +257,7 @@ def _plan_from_body(d: dict) -> dict:
     steps = d.get("steps")
     if not isinstance(steps, list):
         raise HTTPException(400, "a plan needs a steps list")
-    plan = plans.new_plan(str(d.get("title") or "Plan"), steps, source=str(d.get("source") or ""))
+    plan = plans.new_plan(str(d.get("title") or "Plan"), steps, source=str(d.get("source") or ""), options=d.get("options"))
     if d.get("id"):
         plan["id"] = str(d["id"])
     if d.get("status") in plans.PLAN_STATUS:

@@ -91,12 +91,16 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+BEHAVIOUR = {"flaky_fail": 0, "continue": []}     # scripted by the tests: how many flaky runs fail, what each continue does
+
+
 def _fake_hub(state_modules, log: list):
     """The routes Admin uses, answered the way the real hub answers them."""
     from fastapi import FastAPI, Request
     from fastapi.responses import StreamingResponse
     app = FastAPI()
     cancelled = set()
+    saved = set()                                   # jobs whose design got as far as a save (what a continue needs)
 
     @app.get("/healthz")
     def healthz():
@@ -130,9 +134,12 @@ def _fake_hub(state_modules, log: list):
         async def gen():
             import asyncio
             yield sse({"type": "start", "run_id": rid, "module": mod, "tab": tab, "cmd": f"python -m {mod} {tab}"})
-            if tab == "slow":
+            if tab == "slow" or (tab == "design" and body["fields"].get("brief") == "slow"):
+                saved.add(body["job"])
                 for i in range(40):
                     if rid in cancelled:
+                        if tab == "design":                       # HR Steel: Stop saves the conversation and pauses
+                            yield sse({"type": "paused", "reason": "stopped by user", "detail": "Progress is saved"})
                         yield sse({"type": "done", "ok": False, "cancelled": True, "rc": -1, "job": body["job"], "artifacts": []})
                         return
                     yield sse({"type": "log", "text": f"tick {i}"})
@@ -143,6 +150,37 @@ def _fake_hub(state_modules, log: list):
             if tab == "fail":
                 yield sse({"type": "error", "text": "boom"})
                 yield sse({"type": "done", "ok": False, "rc": 1, "job": body["job"], "artifacts": []})
+            elif tab == "flaky":                                  # a design whose model server is away for a while
+                saved.add(body["job"])
+                if BEHAVIOUR["flaky_fail"] > 0:
+                    BEHAVIOUR["flaky_fail"] -= 1
+                    yield sse({"type": "status", "text": "LLM call failed (ReadTimeout); retry 8/8 in 60s"})
+                    yield sse({"type": "error", "text": "LLM call failed: LLM API 502: upstream connect error"})
+                    yield sse({"type": "done", "ok": False, "job": body["job"], "artifacts": [], "end": True})
+                else:
+                    yield sse({"type": "done", "ok": True, "job": body["job"], "artifacts": [{"label": "Report", "path": "report.html"}], "end": True})
+            elif tab == "pauser":                                 # HR Steel's loop guard
+                saved.add(body["job"])
+                yield sse({"type": "paused", "reason": "'run_python' repeated 3x with no progress", "detail": "hit Continue"})
+                yield sse({"type": "done", "ok": False, "job": body["job"], "artifacts": [], "end": True})
+            elif tab == "budget":                                 # nothing a continue would heal
+                saved.add(body["job"])
+                yield sse({"type": "error", "text": "call budget reached (200 model calls) -- run aborted"})
+                yield sse({"type": "done", "ok": False, "job": body["job"], "artifacts": [], "end": True})
+            elif tab == "continue":                               # HR Steel's Continue: resume from conversation.json
+                what = BEHAVIOUR["continue"].pop(0) if BEHAVIOUR["continue"] else "ok"
+                if body["job"] not in saved or what == "409":
+                    yield sse({"type": "error", "text": f"HR Steel refused the run (409): nothing to resume for '{body['job']}', and your browser holds no saved copy of it."})
+                    yield sse({"type": "done", "ok": False, "job": body["job"], "artifacts": [], "end": True})
+                elif what == "paused":
+                    yield sse({"type": "paused", "reason": "'run_python' repeated 3x with no progress", "detail": "hit Continue"})
+                    yield sse({"type": "done", "ok": False, "job": body["job"], "artifacts": [], "end": True})
+                elif what.startswith("error:"):
+                    yield sse({"type": "error", "text": what[6:]})
+                    yield sse({"type": "done", "ok": False, "job": body["job"], "artifacts": [], "end": True})
+                else:
+                    yield sse({"type": "status", "text": f"resumed '{body['job']}' from saved conversation (41 messages)"})
+                    yield sse({"type": "done", "ok": True, "job": body["job"], "artifacts": [{"label": "Report", "path": "report.html"}], "end": True})
             else:
                 yield sse({"type": "done", "ok": True, "rc": 0, "job": body["job"], "artifacts": [{"label": "Report", "path": "report.html"}]})
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"X-Run-Id": rid})
@@ -158,10 +196,18 @@ def fake_hub():
               {"id": "examples", "type": "select", "label": "Example", "fills": {"path": "/api/example/{value}", "key": "brief", "target": "brief"}}]
     mods = [
         {"id": "steltic", "name": "HR Steel", "status": {"env_ready": True, "installed": True}, "missing_needs": [], "wants_credentials": True,
-         "tabs": [{"id": "design", "title": "Design", "kind": "form", "run": {"kind": "http"}, "fields": fields, "missing_optional": []},
+         "tabs": [{"id": "design", "title": "Design", "kind": "form", "run": {"kind": "http", "continues": None}, "fields": fields, "missing_optional": []},
+                  {"id": "continue", "title": "Continue", "kind": "form", "run": {"kind": "http", "continues": "design"}, "missing_optional": [],
+                   "fields": [{"id": "job", "type": "project", "label": "Project", "required": True},
+                              {"id": "brief", "type": "textarea", "label": "Instruction", "required": False, "has_default": False}]},
                   {"id": "fail", "title": "Fail", "kind": "form", "run": {"kind": "cli"}, "fields": [], "missing_optional": []},
                   {"id": "slow", "title": "Slow", "kind": "form", "run": {"kind": "cli"}, "fields": [], "missing_optional": []},
+                  {"id": "flaky", "title": "Flaky design", "kind": "form", "run": {"kind": "http"}, "fields": [], "missing_optional": []},
+                  {"id": "pauser", "title": "Pausing design", "kind": "form", "run": {"kind": "http"}, "fields": [], "missing_optional": []},
+                  {"id": "budget", "title": "Budget", "kind": "form", "run": {"kind": "http"}, "fields": [], "missing_optional": []},
                   {"id": "app", "title": "Full UI", "kind": "embed", "run": None, "fields": []}]},
+        {"id": "steltic_x", "name": "X design", "status": {"env_ready": True, "installed": True}, "missing_needs": [], "wants_credentials": True,
+         "tabs": [{"id": "flaky", "title": "Flaky (no continue tab)", "kind": "form", "run": {"kind": "http"}, "fields": [], "missing_optional": []}]},
         {"id": "steltic_nonlinear", "name": "Nonlinear (SNL)", "status": {"env_ready": True}, "missing_needs": [], "wants_credentials": False,
          "tabs": [{"id": "run", "title": "Run", "kind": "form", "run": {"kind": "cli"}, "missing_optional": [],
                    "fields": [{"id": "job", "type": "project", "label": "Project", "required": True},
@@ -172,6 +218,7 @@ def fake_hub():
         {"id": "not_installed", "name": "Absent", "status": {"env_ready": False}, "missing_needs": [], "tabs": [{"id": "x", "title": "X", "kind": "form", "run": {"kind": "cli"}, "fields": []}]},
     ]
     log: list = []
+    BEHAVIOUR["mods"] = mods                          # so a test can point steltic's Continue tab at another tab
     app = _fake_hub(mods, log)
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
@@ -315,6 +362,171 @@ def test_validate_without_a_hub_says_so(tmp_path):
     ex = plans.Executor(HubClient("http://127.0.0.1:1"), plans.Store(tmp_path / "a"), tmp_path / "jobs")
     errors, _ = ex.validate(plans.new_plan("x", [{"project": "A", "module": "m", "tab": "t", "fields": {}}]))
     assert errors and "did not answer" in errors[0]
+
+
+# ---------------------------------------------------------------- a step is not one run
+def _probe_seq(*answers):
+    """A model-server probe that plays `answers` then repeats the last one."""
+    seq = list(answers)
+    def probe():
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+    return probe
+
+
+@pytest.fixture
+def fast_waits(monkeypatch):
+    monkeypatch.setattr(plans, "WAIT_CHECK", 0.05)
+    monkeypatch.setattr(plans, "WAIT_FLOOR", (0.1, 0.1))
+    BEHAVIOUR["flaky_fail"] = 0; BEHAVIOUR["continue"] = []
+    yield
+    BEHAVIOUR["flaky_fail"] = 0; BEHAVIOUR["continue"] = []
+
+
+def test_classify_tells_a_server_outage_from_a_pause_from_a_dead_end():
+    c = plans.classify
+    assert c({"errors": ["LLM call failed: LLM API 502: upstream connect error"]}) == "transient"
+    assert c({"errors": ["LLM call failed: "]}) == "retryable"                     # HR Steel's str(ReadTimeout) is empty
+    assert c({"errors": ["lost the hub's stream: ReadError: "]}) == "transient"
+    assert c({"errors": ["the hub at http://127.0.0.1:8300 did not answer: ConnectError"]}) == "transient"
+    assert c({"errors": ["CFS Steel refused the run (429): you already have a run in progress"]}) == "transient"
+    assert c({"errors": ["LLM call failed: LLM API 400: Invalid JSON in tool call arguments: '{'"]}) == "retryable"
+    assert c({"errors": ["call budget reached (200 model calls) -- run aborted"]}) == "final"
+    assert c({"errors": ["HR Steel refused the run (400): set your LLM base-url + API key in Settings first"]}) == "final"
+    assert c({"errors": [], "paused": "'run_python' repeated 3x with no progress"}) == "paused"
+    assert c({"errors": [], "paused": "cannot access the RAG API, restart the RAG server then click Continue."}) == "transient"
+    assert c({"errors": [], "rc": 1}) == "retryable"
+
+
+def test_resume_continues_a_stopped_design_where_it_stopped(fake_hub, tmp_path, fast_waits):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    plan = plans.new_plan("s", [{"project": "C1", "module": "steltic", "tab": "design", "fields": {"brief": "slow"}},
+                               {"project": "C1", "module": "steltic_nonlinear", "tab": "run", "fields": {}}])
+    ex.store.save(plan); ex.start(plan["id"])
+    deadline = time.time() + 10
+    while time.time() < deadline and not ex.current_run(plan["id"]):
+        time.sleep(0.05)
+    n0 = len(log)
+    ex.stop(plan["id"])
+    p = _wait(ex, plan["id"])
+    assert p["status"] == "stopped" and p["steps"][0]["status"] == "stopped"
+    assert p["steps"][0]["resume"] is True and "continues it" in p["steps"][0]["note"]
+    ex.start(plan["id"]); p = _wait(ex, plan["id"])                      # Resume: the Continue tab, no fields, then the rest
+    assert [s["status"] for s in p["steps"]] == ["done", "done"] and p["status"] == "done"
+    sent = [(r["module"], r["tab"], r["job"], r["fields"]) for r in log[n0:]]
+    assert sent == [("steltic", "continue", "C1", {}), ("steltic_nonlinear", "run", "C1", {})]
+    assert p["steps"][0]["ran_tab"] == "continue" and p["steps"][0]["resume"] is False
+    text = ex.store.log_tail(plan["id"], 1)
+    assert "continues the Design run from where it stopped" in text and "resumed 'C1' from saved conversation" in text
+    # ... unless the user asks for a fresh start
+    ex.store.save(plan); ex.start(plan["id"]); time.sleep(0.3); ex.stop(plan["id"]); _wait(ex, plan["id"])
+    n1 = len(log)
+    ex.start(plan["id"], fresh=True); p = _wait(ex, plan["id"])
+    assert log[n1]["tab"] == "design" and log[n1]["fields"]["brief"] == "slow" and p["steps"][0]["status"] == "done"
+
+
+def test_a_server_outage_is_waited_out_then_the_design_continues(fake_hub, tmp_path, fast_waits):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    ex.probe = _probe_seq(False, False, True)                            # the model server: down, down, back
+    BEHAVIOUR["flaky_fail"] = 1
+    plan = plans.new_plan("w", [{"project": "W1", "module": "steltic", "tab": "flaky", "fields": {}}])
+    # the fake hub continues a "flaky" step through steltic's Continue tab: point the tab at it
+    ex.store.save(plan); n0 = len(log)
+    mods = {m["id"]: m for m in BEHAVIOUR["mods"]}
+    mods["steltic"]["tabs"][1]["run"]["continues"] = "flaky"
+    ex.start(plan["id"]); p = _wait(ex, plan["id"])
+    mods["steltic"]["tabs"][1]["run"]["continues"] = "design"
+    st = p["steps"][0]
+    assert st["status"] == "done" and st["waited"] == 1 and st["continued"] == 0 and st["ran_tab"] == "continue"
+    assert [(r["tab"], r["fields"]) for r in log[n0:]] == [("flaky", {}), ("continue", {})]
+    text = ex.store.log_tail(plan["id"], 1)
+    assert "LLM API 502" in text and "waiting for the model server" in text and "continuing from where it stopped" in text
+    assert p["status"] == "done"
+
+
+def test_a_module_without_a_continuing_tab_is_run_again_after_the_wait(fake_hub, tmp_path, fast_waits):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    ex.probe = _probe_seq(None)                                          # Admin holds no connection: it just waits
+    BEHAVIOUR["flaky_fail"] = 2
+    plan = plans.new_plan("w", [{"project": "W2", "module": "steltic_x", "tab": "flaky", "fields": {}}])
+    ex.store.save(plan); n0 = len(log)
+    ex.start(plan["id"]); p = _wait(ex, plan["id"])
+    st = p["steps"][0]
+    assert st["status"] == "done" and st["waited"] == 2 and st["ran_tab"] == "flaky"
+    assert [r["tab"] for r in log[n0:]] == ["flaky", "flaky", "flaky"]
+    # and with wait_for_llm off the outage is a plain failure
+    BEHAVIOUR["flaky_fail"] = 1
+    plan = plans.new_plan("w", [{"project": "W3", "module": "steltic_x", "tab": "flaky", "fields": {}}], options={"wait_for_llm": False})
+    ex.store.save(plan); ex.start(plan["id"]); p = _wait(ex, plan["id"])
+    assert p["steps"][0]["status"] == "failed" and "LLM API 502" in p["steps"][0]["note"] and p["steps"][0]["waited"] == 0
+
+
+def test_a_pause_is_continued_by_itself_a_bounded_number_of_times(fake_hub, tmp_path, fast_waits):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    mods = {m["id"]: m for m in BEHAVIOUR["mods"]}
+    mods["steltic"]["tabs"][1]["run"]["continues"] = "pauser"
+    try:
+        BEHAVIOUR["continue"] = ["paused", "paused", "ok"]
+        plan = plans.new_plan("p", [{"project": "P1", "module": "steltic", "tab": "pauser", "fields": {}}], options={"auto_continue": 3})
+        ex.store.save(plan); n0 = len(log); ex.start(plan["id"]); p = _wait(ex, plan["id"])
+        st = p["steps"][0]
+        assert st["status"] == "done" and st["continued"] == 3 and [r["tab"] for r in log[n0:]] == ["pauser", "continue", "continue", "continue"]
+        assert "continuing from where it stopped (1 of 3)" in ex.store.log_tail(plan["id"], 1)
+        BEHAVIOUR["continue"] = ["paused", "paused", "paused"]
+        plan = plans.new_plan("p", [{"project": "P2", "module": "steltic", "tab": "pauser", "fields": {}}], options={"auto_continue": 2})
+        ex.store.save(plan); n0 = len(log); ex.start(plan["id"]); p = _wait(ex, plan["id"])
+        st = p["steps"][0]
+        assert st["status"] == "failed" and st["continued"] == 2 and "after 2 continues" in st["note"] and "no progress" in st["note"]
+        assert [r["tab"] for r in log[n0:]] == ["pauser", "continue", "continue"]
+        assert st["resume"] is True                                       # Resume with retry continues it again
+    finally:
+        mods["steltic"]["tabs"][1]["run"]["continues"] = "design"
+
+
+def test_a_dead_end_is_not_continued_and_nothing_to_resume_starts_over_once(fake_hub, tmp_path, fast_waits):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    mods = {m["id"]: m for m in BEHAVIOUR["mods"]}
+    mods["steltic"]["tabs"][1]["run"]["continues"] = "budget"
+    try:
+        plan = plans.new_plan("b", [{"project": "B1", "module": "steltic", "tab": "budget", "fields": {}}])
+        ex.store.save(plan); n0 = len(log); ex.start(plan["id"]); p = _wait(ex, plan["id"])
+        st = p["steps"][0]
+        assert st["status"] == "failed" and st["continued"] == 0 and "call budget" in st["note"] and [r["tab"] for r in log[n0:]] == ["budget"]
+    finally:
+        mods["steltic"]["tabs"][1]["run"]["continues"] = "design"
+    # a step marked resumable whose module has nothing saved: the continue is refused (409), the step starts over
+    (jobs / "N1").mkdir(); (jobs / "N1" / "brief.md").write_text("fresh")
+    plan = plans.new_plan("n", [{"project": "N1", "module": "steltic", "tab": "design", "fields": {"brief": "@project"}}])
+    plan["steps"][0].update(status="stopped", run_id="r-old")
+    ex.store.save(plan); n0 = len(log)
+    BEHAVIOUR["continue"] = ["409"]
+    ex.start(plan["id"]); p = _wait(ex, plan["id"])
+    assert [(r["tab"], r["fields"].get("brief")) for r in log[n0:]] == [("continue", None), ("design", "fresh")]
+    assert p["steps"][0]["status"] == "done" and "starting the step over" in ex.store.log_tail(plan["id"], 1)
+
+
+def test_stop_ends_a_wait_for_the_server(fake_hub, tmp_path, fast_waits):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    ex.probe = _probe_seq(False)                                          # never comes back
+    BEHAVIOUR["flaky_fail"] = 1
+    plan = plans.new_plan("w", [{"project": "W4", "module": "steltic_x", "tab": "flaky", "fields": {}},
+                               {"project": "W4", "module": "steltic_nonlinear", "tab": "run", "fields": {}}])
+    ex.store.save(plan); ex.start(plan["id"])
+    deadline = time.time() + 10
+    while time.time() < deadline and "waiting for the model server" not in (ex.store.load(plan["id"])["steps"][0]["note"] or ""):
+        time.sleep(0.05)
+    assert ex.running == plan["id"]
+    ex.stop(plan["id"]); p = _wait(ex, plan["id"])
+    assert p["status"] == "stopped" and [s["status"] for s in p["steps"]] == ["stopped", "pending"]
+    assert "stopped while waiting" in p["steps"][0]["note"]
+    BEHAVIOUR["flaky_fail"] = 0
+    ex.start(plan["id"]); p = _wait(ex, plan["id"])                       # Resume runs it again (no continuing tab here)
+    assert [s["status"] for s in p["steps"]] == ["done", "done"]
 
 
 # ---------------------------------------------------------------- help

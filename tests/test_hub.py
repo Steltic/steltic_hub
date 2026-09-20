@@ -693,6 +693,19 @@ def test_bridge_answers_empty_not_error_for_unknown_and_unconverted(tmp_path):
     out = br.query({"query": "eigen", "collection": "opensees_documentation"})
     assert out["results"] == [] and "missing" in out["note"]
     assert (root / "queue" / "agent_queries.jsonl").exists()
+    # a stem the corpus holds under a name the fixed table does not know is still a valid collection
+    (root / "scripts" / "retrieval.py").write_text(
+        "class Corpus:\n"
+        "    def __init__(self, root): self.doc_meta = {'IS_875_3': {}, 'ASCE_7_22': {}}\n"
+        "    def search(self, *a, **k): return {'found': False, 'hits': []}\n"
+        "def resolve_doc(t): return t\n")
+    import sys as _sys
+    _sys.modules.pop("retrieval", None)                 # the stub above is a different module now
+    br = b.Bridge(root, root / "scripts")
+    for name in ("engineering_standards_IS_875_3", "ASCE_7_22"):
+        out = br.query({"query": "wind", "collection": name})
+        assert "unknown collection" not in (out.get("note") or ""), name
+    assert "unknown collection" in br.query({"query": "x", "collection": "engineering_standards_NOPE"})["note"]
 
 
 def test_design_modules_ground_through_the_query_file_manager_server():
@@ -1152,3 +1165,30 @@ def test_run_llm_is_declared_only_where_it_means_something():
     assert review.run.llm is True and review.run.env["RAG_API_URL"] == "{server.steltic_grokbot}/query"
     assert runners.servers_referenced(cat["steltic_nonlinear"], review) == ["steltic_grokbot"]
     assert [t.id for t in cat["steltic_nonlinear"].tabs if t.run and t.run.llm] == ["review"]
+
+
+def test_run_continues_names_the_tab_a_resume_picks_up():
+    """`run.continues` is how a driver (Admin's batch) knows which tab resumes an interrupted run instead
+    of starting the step over. It must name another runnable tab of the same module, of the same kind."""
+    srv = {"command": ["-m", "x"], "health": "/healthz"}
+    def mk(run):
+        return {"schema": 1, "id": "x", "name": "X", "env": {"python": "3.12", "install": []}, "server": srv,
+                "tabs": [{"id": "design", "kind": "form", "run": {"kind": "http", "path": "/api/run"}},
+                         {"id": "cont", "kind": "form", "run": run},
+                         {"id": "app", "kind": "embed"}]}
+    for bad in ({"kind": "http", "path": "/api/run", "continues": "nope"},        # no such tab
+                {"kind": "http", "path": "/api/run", "continues": "cont"},        # itself
+                {"kind": "http", "path": "/api/run", "continues": "app"},         # a tab with nothing to run
+                {"kind": "cli", "command": ["-m", "x"], "continues": "design"},   # a cli run cannot resume an http one
+                {"kind": "http", "path": "/api/run", "continues": 3}):
+        with pytest.raises(ManifestError):
+            Manifest.parse(mk(bad), "t")
+    m = Manifest.parse(mk({"kind": "http", "path": "/api/run", "continues": "design"}), "t")
+    j = m.to_json()["tabs"]
+    assert j[1]["run"]["continues"] == "design" and j[0]["run"]["continues"] is None
+    # the catalog: HR Steel's and CFS's Continue tabs resume their Design tabs
+    cat = load_catalog(config.CATALOG_DIR)
+    for mid in ("steltic", "steltic_cfs"):
+        cont = next(t for t in cat[mid].tabs if t.id == "continue")
+        assert cont.run.continues == "design" and cont.run.body.get("resume") is True
+        assert [t.id for t in cat[mid].tabs if t.run and t.run.continues] == ["continue"]

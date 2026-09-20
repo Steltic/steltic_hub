@@ -126,7 +126,7 @@ class HubClient:
         `should_stop` is polled between events; when it turns true the run is cancelled through the hub
         and the stream is followed to its end, so the outcome is the hub's, not a guess."""
         out = {"ok": False, "rc": None, "cancelled": False, "run_id": None, "artifacts": [], "errors": [],
-               "attempts": 1, "ended": False}
+               "attempts": 1, "ended": False, "paused": None}
         cancelled_by_us = False
         try:
             with httpx.Client(timeout=httpx.Timeout(None, connect=30.0)) as cx:
@@ -152,6 +152,8 @@ class HubClient:
                                 out["errors"].append(str(ev.get("text") or "error"))
                             elif t == "retry":
                                 out["attempts"] = int(ev.get("attempt") or out["attempts"])
+                            elif t == "paused":          # the module saved its state and stopped: why, for the executor
+                                out["paused"] = str(ev.get("reason") or "paused") + ((" -- " + str(ev["detail"])) if ev.get("detail") else "")
                             elif t == "done" and (ev.get("end") or "rc" in ev or "artifacts" in ev):
                                 out["ok"] = bool(ev.get("ok"))
                                 out["rc"] = ev.get("rc")

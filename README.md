@@ -273,6 +273,13 @@ access violation) with no traceback — gets one line saying what the code means
 from `run.crash_hint` when the manifest gives one (the PDF converter's: run again, it resumes from the last
 finished chunk).
 
+A tab whose run says `"continues": "<tab id>"` picks up an interrupted run of that tab (same
+module, same `run.kind`) from the state that run saved in the project — HR Steel's and CFS's
+*Continue* resume a *Design* from `conversation.json`, and pressing it with no fields is a plain
+resume. The hub does nothing with the key beyond validating and publishing it; it is for whatever
+drives runs on the user's behalf. Admin's batch reads it: a step stopped, timed out or paused is
+continued through that tab instead of started over (see *Admin*).
+
 Project names are reduced to `[A-Za-z0-9_-]` on purpose: that is exactly the set the design
 servers keep, so a module never writes to a folder the hub is not looking in.
 
@@ -394,7 +401,10 @@ through `POST /api/run/…` exactly as a click on that tab would.
 * **Batch** — `J1 to hr then nl; then J2 to cfs; then J3 (ex22) to hr` becomes a plan of
   `(project, module, tab, fields)` steps, checked against what is installed, then run one after
   another with every run's stream logged to `admin/logs/`. Stop, Resume, a failure policy per
-  step, and a plan interrupted by a hub restart is marked so rather than restarted blind.
+  step, and a plan interrupted by a hub restart is marked so rather than restarted blind. A step
+  is not one run: a design that was stopped, timed out or paused is continued from what its module
+  saved (the tab the manifest marks `continues`), a model-server outage is waited out for as long
+  as it takes rather than failing the step, and a pause is continued a few times by itself.
 * **Standards** — a folder of licensed specification PDFs becomes a queue of Query file manager
   conversions (one `convert` per PDF with its canonical stem, then `index`, then `audit`): the
   24-hour setup job, unattended.

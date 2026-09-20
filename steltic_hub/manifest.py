@@ -145,6 +145,12 @@ class Run:
     # (see README, "A CLI run that talks to the model"), the way it pushes the same connection to a
     # module server's /api/creds. The process streams what the model says back as event lines.
     llm: bool = False
+    # This run picks up an interrupted run of the named tab (same module) from the state that run
+    # saved in the project -- HR Steel's Continue resumes a Design from conversation.json. The hub
+    # itself does nothing with it; it tells whoever drives runs for the user (Admin's batch) which
+    # tab to press after a stop, a timeout or a pause instead of starting the step over. Only the
+    # module knows that such a tab exists and that pressing it with no fields is a plain resume.
+    continues: str = ""
 
     @staticmethod
     def parse(d: dict) -> "Run":
@@ -154,6 +160,8 @@ class Run:
             raise ManifestError(f"run.kind {r.kind!r} must be cli, http or none")
         if r.llm not in (True, False):
             raise ManifestError("run.llm must be true or false")
+        if not isinstance(r.continues, str):
+            raise ManifestError("run.continues must be the id of the tab this run resumes")
         if r.llm and r.kind != "cli":
             raise ManifestError("run.llm is for kind cli (an http run gets the connection through the module's credentials path)")
         if r.kind == "cli" and not r.command:
@@ -315,6 +323,13 @@ class Manifest:
         for t in m.tabs:
             if t.kind == "form" and not t.run:
                 raise ManifestError(f"{origin}: tab {t.id!r} is a form with nothing to run")
+            if t.run and t.run.continues:
+                # a resume that names a tab which does not run (or itself) would be pressed in vain
+                target = next((x for x in m.tabs if x.id == t.run.continues), None)
+                if target is None or not target.run or target is t:
+                    raise ManifestError(f"{origin}: tab {t.id!r} continues {t.run.continues!r}, which is not another runnable tab of {m.id!r}")
+                if target.run.kind != t.run.kind:
+                    raise ManifestError(f"{origin}: tab {t.id!r} ({t.run.kind}) cannot continue {t.run.continues!r} ({target.run.kind}) -- a resume runs the way the run it resumes did")
             if t.run and t.run.kind == "http" and not m.has_server:
                 raise ManifestError(f"{origin}: tab {t.id!r} runs over http but the module has no server")
             if t.kind == "embed" and not m.has_server:
@@ -357,6 +372,7 @@ class Manifest:
                 "id": t.id, "title": t.title, "kind": t.kind, "src": t.src,
                 "blurb": t.blurb, "artifacts": t.artifacts, "links": t.links,
                 "run": ({"kind": t.run.kind, "label": t.run.label, "llm": bool(t.run.llm),
+                         "continues": t.run.continues or None,
                          "can_cancel": t.run.kind == "cli" or bool(t.run.cancel)} if t.run else None),
                 "fields": [{
                     "id": f.id, "type": f.type, "label": f.label, "placeholder": f.placeholder,

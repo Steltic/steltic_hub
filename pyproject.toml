@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "steltic-hub"
-version = "0.2.1"
+version = "0.2.2"
 description = "Desktop hub for the Steltic modules: one window, per-module Python environments, input tabs on top of the viewer bundle"
 readme = "README.md"
 license = "MIT"
