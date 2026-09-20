@@ -40,9 +40,17 @@ CONNECTION_FILE = DATA / "connection.json"   # the user's LLM connection, kept o
 for _d in (DATA, MODULES_DIR, ENVS_DIR, JOBS_DIR, LOGS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
-# Port window for module servers the hub supervises.
+# Port window for module servers the hub supervises. Each module keeps the port it was first
+# given (PORTS_FILE remembers it), so one origin never serves two modules' pages -- see
+# ServerSupervisor._alloc_port for why that matters.
 PORT_BASE = int(os.environ.get("STELTIC_HUB_PORT_BASE", "8410"))
 PORT_SPAN = 40
+PORTS_FILE = DATA / "ports.json"
+
+# After Stop has been sent to a module server, how long the hub keeps relaying its stream before
+# dropping it. A server that honours its stop endpoint ends the stream itself well within this;
+# one that does not gets the signal it gives a closed browser tab.
+STOP_GRACE = float(os.environ.get("STELTIC_HUB_STOP_GRACE", "8"))
 
 # uv is the provisioning tool: it installs its own CPython, so the user never picks one.
 UV_BIN = os.environ.get("STELTIC_HUB_UV", "uv")

@@ -432,6 +432,76 @@
       ]
     },
     {
+      "id": "review",
+      "title": "Review",
+      "kind": "form",
+      "blurb": "The model reads what the run measured — the Chapter 16 acceptance, the pushover mechanism, the DDM check, the §16.1.4 draft — looks up the governing clauses in the Query file manager's standards corpus, and writes an engineer's review with citations: what passed, what is marginal, what to change and why. Its reasoning and its text stream here as it works; the review lands in the project folder.",
+      "run": {
+        "kind": "cli",
+        "cwd": "{job_dir}",
+        "label": "Write the review",
+        "llm": true,
+        "env": {
+          "RAG_API_URL": "{server.steltic_grokbot}/query"
+        },
+        "command": [
+          "-m",
+          "snl",
+          "review",
+          "{job_dir}"
+        ]
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        },
+        {
+          "id": "focus",
+          "type": "textarea",
+          "label": "Focus (optional)",
+          "arg": "--focus",
+          "rows": 4,
+          "placeholder": "e.g. Is the storey-3 drift concentration a mechanism problem or an accidental-torsion artefact? Would deeper columns in the lower two storeys be the cheaper fix?",
+          "help": "Anything you want the review to concentrate on. Empty = the standard review: acceptance, margins, mechanism, what to change."
+        },
+        {
+          "id": "no_standards",
+          "type": "checkbox",
+          "label": "Answer from the run alone (do not query the standards)",
+          "arg": "--no-standards",
+          "arg_style": "flag-if-true",
+          "help": "Normally the model grounds every clause it cites in the Query file manager's corpus. Tick to skip that (faster; citations then come from the model's memory and are flagged as unverified)."
+        },
+        {
+          "id": "max_searches",
+          "type": "number",
+          "label": "Standards searches, at most",
+          "arg": "--max-searches",
+          "default": 8
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Review",
+          "path": "review.html",
+          "accent": "#ffb070"
+        },
+        {
+          "label": "Review (.md)",
+          "path": "review.md",
+          "accent": "#ffb070"
+        },
+        {
+          "label": "Passages used",
+          "path": "review_transcript.json",
+          "accent": "#a89f92"
+        }
+      ]
+    },
+    {
       "id": "feedback",
       "title": "Feedback",
       "kind": "embed",

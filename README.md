@@ -223,6 +223,19 @@ Paste that into **Modules → Add a module** and it is installable. No hub relea
 | `cli` | spawns `<module venv python> command…` in the job folder, streams stdout as SSE; Stop kills the process tree |
 | `http` | calls the module's own API and relays its event stream; `run.cancel` (`{method, path, body}`) is what Stop calls |
 
+A CLI run's stdout is log lines — except a line that is one JSON object with a `type` from the
+design agents' vocabulary (`token`, `reasoning`, `tool`, `tool_result`, `milestone`, `status`,
+`usage`, `warning`, `assistant`, `error`, `paused`, `artifact`), which the hub relays as that event.
+That is how a process that talks to the model gets the same streamed model-output line, separate
+model-reasoning box, activity lights and usage strip the agent servers get, with no server of its
+own. A CLI run that does talk to the model says so with `"llm": true`: the hub then refuses to
+start it without a connection and hands the connection to the process as `STELTIC_LLM_BASE_URL`,
+`STELTIC_LLM_API_KEY`, `STELTIC_LLM_MODEL`, `STELTIC_LLM_PROVIDER`, `STELTIC_LLM_REASONING` and
+`STELTIC_LLM_MAX_TOKENS` — the key reaches that process's environment and nothing else. A CLI run
+whose command or `run.env` names `{server.<module_id>}` has that module's server started first
+and its address substituted (the Nonlinear module's Review tab reaches the standards server this
+way); a module that is not installed leaves the variable unset.
+
 `run.stage` copies inputs into place before the command runs: each `{from, to}` entry may name a
 folder (its contents are copied), a `.zip` (unpacked, a single wrapping folder is flattened) or a
 file. An empty or missing `from` is skipped unless the entry is `required`, in which case the run
@@ -234,8 +247,8 @@ Templates available in commands, bodies, env vars, stage entries and field defau
 `{need.<module_id>}`, `{python.<module_id>}` (the interpreter of a needed module's environment,
 for a module that runs its jobs inside that environment instead of installing openseespy twice),
 `{out.<module_id>}` (that module's output folder for the active project), `{server.<module_id>}`
-(the address of another module's server, which the hub starts first when `server.requires` names
-it), `{hub_url}` (the URL the hub itself answers on, for a module whose server drives other modules
+(the address of another module's server, which the hub starts first — for a module server when
+`server.requires` names it, for a CLI run when its command or `run.env` uses it), `{hub_url}` (the URL the hub itself answers on, for a module whose server drives other modules
 through the hub's own API — Admin is the one that does) and `{f.<field_id>}`.
 Values are substituted into an argv list and never handed to a shell; a field value is never
 expanded a second time.
@@ -289,7 +302,9 @@ examples that come with the module. No embeddings, no vector store, nothing leav
 
 HR Steel and CFS declare `server.requires: ["steltic_grokbot"]` and
 `RAG_API_URL: "{server.steltic_grokbot}/query"`: when they start, the hub starts the grounding
-server first and passes its address. With Query file manager not installed the variable is left
+server first and passes its address. The Nonlinear module's **Review** tab does the same for one
+CLI run (`run.env.RAG_API_URL`), so its model grounds the clauses it cites without the module
+keeping a server up for it. With Query file manager not installed the variable is left
 unset and the agents run the way their repos do without a RAG (clauses from memory, flagged for
 verification); install it later and the design servers restart with it on their next run. The
 module's **Grounding** tab shows what the agents asked and what they got back. Until you convert
@@ -412,6 +427,13 @@ repository (`steltic_nonlinear` 0.2, branch `feedback-loops`):
   (PEER `.AT2` or CSV pairs indexed on the fly, ranked for M / R consistency), *Pulse-type share*.
 * **Design criteria** (form) — `nlrha criteria`: the §16.1.4 design criteria draft (.docx + .html),
   also written at the end of every Run.
+* **Review** (form, `run.llm`) — `snl review`: the model reads what the run measured (the Chapter 16
+  acceptance, the pushover mechanism, the DDM check, the §16.1.4 draft), looks the governing clauses
+  up in the Query file manager's corpus through `RAG_API_URL`, and writes `review.md` / `review.html`
+  in the project folder — what passed, what is marginal, what to change and why, each clause cited
+  from the passage it read (`review_transcript.json` keeps them). It streams as the design agents
+  do: model text on the run line, the model's reasoning in its own box, one line per standards
+  search. Needs `steltic_nonlinear` 0.3 (the `review` command) and the LLM connection.
 
 The module's install spec is now `-e .[hub]` (fastapi/uvicorn for the tab server): a hub that
 already holds a Nonlinear environment needs **Update** on the Modules page once. HR Steel
@@ -430,8 +452,16 @@ A run's log stays with its tab: switch to Viewers or another module while a 90-m
 going and the stream is still there when you come back. The design agents' events render the way
 their own UI renders them — streamed model text on one line, tool calls and results, milestones,
 token usage, a separate model-reasoning box — and **Stop** asks the module server to halt (a CLI
-run's process tree is killed). Both the hub and the module servers send a keepalive comment every
-20 s of silence, so a long quiet stretch is never mistaken for a dead connection.
+run's process tree is killed). A server that acknowledges the stop but keeps streaming gets its
+stream dropped by the hub after `STELTIC_HUB_STOP_GRACE` seconds (8 by default), which every
+module server treats as a stop — so Stop ends the run either way, and the tab says *stopped*.
+Both the hub and the module servers send a keepalive comment every 20 s of silence, so a long
+quiet stretch is never mistaken for a dead connection.
+
+Each module server keeps the port it was first given (`ports.json` in the data folder) and no port
+is ever handed to a second module: every module page loads `/static/app.js` by the same path, and
+the browser caches per origin, so a port that changed hands would serve one module's script inside
+another's page.
 
 ## Shell options, and what each costs
 

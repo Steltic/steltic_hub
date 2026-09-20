@@ -266,20 +266,60 @@ class ServerSupervisor:
             lk = self._locks[mod_id] = asyncio.Lock()
         return lk
 
-    def _alloc_port(self, mod_id: str) -> int:
+    # ---- ports: one origin per module, for as long as the data folder lives
+    #
+    # Every module page references its assets by the same absolute paths (/static/app.js,
+    # /static/styles.css, /api/...). The browser caches those per ORIGIN, and the origin is
+    # 127.0.0.1:<port>. Hand a port that once served Design variations to Admin and the Admin page
+    # loads Variations' cached app.js -- "The variations module could not load: Cannot set
+    # properties of null" inside the Admin tab, and the Feedback tab blank for the same reason.
+    # So a port, once given to a module, stays that module's: remembered in PORTS_FILE across hub
+    # restarts, never reassigned to another module while it is on record.
+    def _saved_ports(self) -> dict:
+        try:
+            d = json.loads(config.PORTS_FILE.read_text(encoding="utf-8"))
+            return {str(k): int(v) for k, v in d.items() if isinstance(v, int)}
+        except Exception:
+            return {}
+
+    def _save_ports(self, saved: dict):
+        try:
+            config.PORTS_FILE.write_text(json.dumps(saved, indent=1, sort_keys=True), encoding="utf-8")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _port_free(p: int) -> bool:
         import socket
-        taken = {p for mid, p in self.ports.items() if mid != mod_id and self.is_up(mid)}
-        for i in range(config.PORT_SPAN):
-            p = config.PORT_BASE + i
-            if p in taken:
-                continue
-            with socket.socket() as s:
-                try:
-                    s.bind(("127.0.0.1", p))
-                except OSError:
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", p))
+                return True
+            except OSError:
+                return False
+
+    def _alloc_port(self, mod_id: str) -> int:
+        saved = self._saved_ports()
+        live = {p for mid, p in self.ports.items() if mid != mod_id and self.is_up(mid)}
+        window = range(config.PORT_BASE, config.PORT_BASE + config.PORT_SPAN)
+        mine = saved.get(mod_id)
+        if mine in window and mine not in live and self._port_free(mine):
+            self.ports[mod_id] = mine
+            return mine
+        owned = {p for mid, p in saved.items() if mid != mod_id}
+        # first a port no module has ever had, then (only if the window is exhausted) one whose
+        # owner is not running -- that owner gets a fresh port of its own next time
+        for spare_owned in (False, True):
+            for p in window:
+                if p in live or (p in owned and not spare_owned) or not self._port_free(p):
                     continue
-            self.ports[mod_id] = p
-            return p
+                saved[mod_id] = p
+                for mid, q in list(saved.items()):
+                    if q == p and mid != mod_id:
+                        del saved[mid]
+                self._save_ports(saved)
+                self.ports[mod_id] = p
+                return p
         raise RunError("no free port for a module server")
 
     def is_up(self, mod_id: str) -> bool:
@@ -535,11 +575,33 @@ class JobRuns:
                                          json=spec.get("body") or {})
                 except Exception:
                     pass
-            task = h.get("task")
-            if task and not spec:
-                task.cancel()            # no stop endpoint: dropping the stream is the stop signal
+            if not spec:
+                self._drop_stream(h)     # no stop endpoint: dropping the stream is the stop signal
+            else:
+                # The stop request went out. A server that honours it ends its stream within a
+                # second or two and the hub's done event follows. One that answers ok and keeps
+                # streaming (CFS Steel's /api/stop cleared its own cancel flag while releasing the
+                # run's quota slot) would leave the button looking dead -- so after STOP_GRACE the
+                # stream is dropped, which every module server already treats as a stop request.
+                def _later():
+                    if self.http.get(run_id) is h:
+                        self._drop_stream(h)
+                asyncio.get_running_loop().call_later(config.STOP_GRACE, _later)
             return True
         return False
+
+    @staticmethod
+    def _drop_stream(h: dict):
+        """Close the hub's side of the module's stream. run_http sees the read fail, and because the
+        run is marked cancelled it ends with a proper done/cancelled event (the browser shows
+        "stopped", not "connection lost"); the module server sees a disconnect, which is its stop."""
+        resp = h.get("resp")
+        if resp is not None:
+            asyncio.ensure_future(resp.aclose())
+        else:
+            task = h.get("task")          # the stream has not opened yet: cancel the request itself
+            if task and not task.done():
+                task.cancel()
 
 
 def sse(ev: dict) -> str:
@@ -549,15 +611,70 @@ def sse(ev: dict) -> str:
 KEEPALIVE = ": ping\n\n"
 
 
-def _run_env(m: Manifest, tab: Tab, ctx: dict) -> dict:
+def _run_env(m: Manifest, tab: Tab, ctx: dict, connection: dict | None = None) -> dict:
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    env.update({k: str(v) for k, v in expand(m.env_vars, ctx).items()})
-    env.update({k: str(v) for k, v in expand(tab.run.env, ctx).items()})
+    for k, v in list(expand(m.env_vars, ctx).items()) + list(expand(tab.run.env, ctx).items()):
+        v = str(v)
+        if "{server." in v or "{python." in v:
+            continue        # names a server / interpreter that is not installed: left unset, as for a server
+        env[k] = v
+    if tab.run.llm and connection:
+        # The same connection the hub pushes to a module server's /api/creds, for a process instead:
+        # the key goes into the child's environment and nowhere else.
+        env.update(llm_env(connection))
     return env
+
+
+def llm_env(connection: dict) -> dict:
+    """The user's LLM connection as the STELTIC_LLM_* variables a `run.llm` CLI process reads."""
+    c = connection or {}
+    return {"STELTIC_LLM_BASE_URL": str(c.get("base_url") or ""), "STELTIC_LLM_API_KEY": str(c.get("api_key") or ""),
+            "STELTIC_LLM_MODEL": str(c.get("model") or ""), "STELTIC_LLM_PROVIDER": str(c.get("provider") or ""),
+            "STELTIC_LLM_REASONING": str(c.get("reasoning") or ""), "STELTIC_LLM_MAX_TOKENS": str(c.get("max_tokens") or "")}
+
+
+_SERVER_REF = re.compile(r"\{server\.([A-Za-z0-9_-]+)\}")
+
+
+def servers_referenced(m: Manifest, tab: Tab) -> list[str]:
+    """Module ids whose server URL this CLI run's command or `run.env` asks for ({server.<id>}).
+
+    Module-wide `env_vars` are not scanned on purpose: a server reference there is for the module's
+    own server (the Nonlinear module's STELTIC_URL = {server.steltic} is for its Feedback server) and
+    resolving it for every CLI run would start HR Steel for a pushover that never talks to it. For a
+    CLI run it stays unset, as it does for a server whose dependency is not installed."""
+    text = json.dumps([tab.run.env, tab.run.command, tab.run.cwd])
+    out: list[str] = []
+    for mid in _SERVER_REF.findall(text):
+        if mid != m.id and mid not in out:
+            out.append(mid)
+    return out
+
+
+# A CLI module may print structured events, one JSON object per line, in the vocabulary the design
+# agents stream (token, reasoning, tool, tool_result, milestone, status, usage, warning, assistant,
+# error, paused, artifact). The hub relays such a line as that event instead of a log line, so a
+# process that talks to the model gets the same model-output and model-reasoning boxes, lights and
+# usage strip as an agent server does. Anything else printed is a log line, as before.
+CLI_EVENT_TYPES = frozenset({"token", "reasoning", "tool", "tool_result", "milestone", "status", "usage",
+                             "warning", "assistant", "error", "paused", "artifact"})
+
+
+def event_line(text: str) -> dict | None:
+    s = text.strip()
+    if len(s) < 12 or s[0] != "{" or s[-1] != "}" or '"type"' not in s:
+        return None
+    try:
+        ev = json.loads(s)
+    except ValueError:
+        return None
+    if not isinstance(ev, dict) or ev.get("type") not in CLI_EVENT_TYPES:
+        return None
+    return ev
 
 
 def _found_artifacts(tab: Tab, root: pathlib.Path, ctx: dict) -> list:
@@ -598,7 +715,8 @@ async def _wait_between_attempts(runs: JobRuns, run_id: str, seconds: float) -> 
     return run_id in runs.cancelled
 
 
-async def run_cli(m: Manifest, tab: Tab, job: str, fields: dict, registry, runs: JobRuns, run_id: str):
+async def run_cli(m: Manifest, tab: Tab, job: str, fields: dict, registry, runs: JobRuns, run_id: str,
+                  supervisor: ServerSupervisor | None = None):
     """Spawn the module's CLI in the job folder and stream its output.
 
     A tab whose manifest declares `run.retry` may spawn its command more than once (see the attempt
@@ -610,14 +728,30 @@ async def run_cli(m: Manifest, tab: Tab, job: str, fields: dict, registry, runs:
         yield sse({"type": "done", "ok": False, "rc": -1})
         return
 
+    # {server.<id>} in the command or environment: that module's server is started first and its
+    # URL substituted -- how a CLI run reaches the standards server without knowing its port. A
+    # module that is not installed leaves the variable unset (see _run_env); one that is installed
+    # but will not start is an error here, before anything is spawned.
+    server_urls: dict = {}
+    for mid in servers_referenced(m, tab) if supervisor is not None else []:
+        try:
+            if registry.is_installed(mid) and registry.manifest(mid).has_server:
+                server_urls[f"server.{mid}"] = await supervisor.ensure(mid)
+        except (RunError, Exception) as e:
+            yield sse({"type": "error", "text": f"{registry.name(mid)} did not start: {e}"})
+            yield sse({"type": "done", "ok": False, "rc": -1})
+            return
+    connection = supervisor.connection() if (supervisor is not None and tab.run.llm) else None
+
     def build(vals: dict):
         """Everything a spawn needs, from one set of field values. A retry that applies `then_set`
         rebuilds all of it, because an overridden field can reach the command, the cwd and the env."""
         ctx = build_ctx(m, job, vals, registry, tab=tab)
+        ctx.update(server_urls)
         cmd = [str(envs.python_bin(m.id)), *expand(tab.run.command, ctx), *cli_args(tab, vals, ctx)]
         cwd = expand(tab.run.cwd or "{job_dir}", ctx)
         pathlib.Path(cwd).mkdir(parents=True, exist_ok=True)
-        return ctx, cmd, cwd, _run_env(m, tab, ctx)
+        return ctx, cmd, cwd, _run_env(m, tab, ctx, connection)
 
     try:
         ctx, cmd, cwd, env = build(fields)
@@ -684,7 +818,8 @@ async def run_cli(m: Manifest, tab: Tab, job: str, fields: dict, registry, runs:
                 if not line:
                     break
                 text = line.rstrip("\r\n")
-                yield sse({"type": "log", "text": text})
+                ev = event_line(text)
+                yield sse(ev if ev is not None else {"type": "log", "text": text})
                 if text.strip():
                     last_line = text          # where the crash happened, as far as the log can tell
                 if not blocked and sac.looks_blocked(line):
@@ -798,13 +933,15 @@ async def run_http(m: Manifest, tab: Tab, job: str, fields: dict, registry,
         body.setdefault(k, v)
     url = base_url + expand(tab.run.path, ctx)
     cancel_spec = expand(tab.run.cancel, ctx) if tab.run.cancel else None
-    runs.http[run_id] = {"spec": cancel_spec, "base_url": base_url, "task": asyncio.current_task()}
+    handle = {"spec": cancel_spec, "base_url": base_url, "task": asyncio.current_task(), "resp": None}
+    runs.http[run_id] = handle
     yield sse({"type": "start", "run_id": run_id, "module": m.id, "tab": tab.id, "cmd": f"{tab.run.method} {url}"})
     jobs.stamp(job, {"event": "start", "module": m.id, "tab": tab.id, "run_id": run_id})
     outcome = {"ok": None, "seen": False}
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=20.0)) as cx:
             async with cx.stream(tab.run.method, url, json=body) as resp:
+                handle["resp"] = resp            # so Stop can drop the stream (JobRuns._drop_stream)
                 if resp.status_code >= 400:
                     txt = (await resp.aread()).decode("utf-8", "replace")[:2000]
                     try:
@@ -837,7 +974,8 @@ async def run_http(m: Manifest, tab: Tab, job: str, fields: dict, registry,
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        yield sse({"type": "error", "text": f"{type(e).__name__}: {e}"})
+        if run_id not in runs.cancelled:      # a stream the hub dropped on purpose is not a failure
+            yield sse({"type": "error", "text": f"{type(e).__name__}: {e}"})
         outcome["ok"] = False
     finally:
         runs.http.pop(run_id, None)

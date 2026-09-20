@@ -333,7 +333,8 @@ function renderForm(body, m, t) {
         (vals[f.id] === undefined || vals[f.id] === null || String(vals[f.id]).trim() === '' || (Array.isArray(vals[f.id]) && !vals[f.id].length)));
       if (missing.length) { status.className = 'status bad'; status.textContent = 'Required: ' + missing.map(f => f.label).join(', '); return; }
       if (!S.project) { status.className = 'status bad'; status.textContent = 'Pick or create a project first'; return; }
-      if (m.wants_credentials && !S.conn) { openConnection(); return; }
+      // a design agent's http run, or a CLI run the manifest marks llm, is a conversation with the user's model
+      if (((m.wants_credentials && t.run.kind === 'http') || t.run.llm) && !S.conn) { openConnection(); return; }
       startRun(m, t, key, { ...vals }, paint, fieldApi);
     };
     stopBtn.onclick = async () => {

@@ -38,6 +38,17 @@ app = FastAPI(title="Probabilistic analysis")
 app.mount("/static", StaticFiles(directory=str(UI)), name="static")
 
 
+@app.middleware("http")
+async def _no_stale_assets(request, call_next):
+    """Every module page fetches /static/app.js and /static/styles.css by the same absolute path, and
+    the browser caches per origin (127.0.0.1:<port>). The hub now keeps one port per module, and this
+    makes the page safe even if it did not: an asset is revalidated on every load."""
+    resp = await call_next(request)
+    if "cache-control" not in resp.headers:
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 # ---------------------------------------------------------------- names, folders, state
 def clean_name(s: str) -> str:
     s = re.sub(r"[^A-Za-z0-9_-]", "", (s or "").strip())

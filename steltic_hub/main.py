@@ -552,13 +552,13 @@ async def run(mod_id: str, tab_id: str, request: Request):
         v = fields.get(f.id)
         if f.required and f.type != "project" and (v is None or v == "" or v == []) and f.default in (None, ""):
             return _sse_error(f"{f.label} is required")
-    if m.credentials and tab.run.kind == "http" and not _CONNECTION:
+    if (m.credentials and tab.run.kind == "http" and not _CONNECTION) or (tab.run.llm and not _CONNECTION):
         return _sse_error("Set your LLM connection first (the Connection button in the title bar).")
 
     run_id = uuid.uuid4().hex[:12]
     jobs.job_dir(job)                      # a real run is what creates the project folder
     if tab.run.kind == "cli":
-        gen = run_cli(m, tab, job, fields, REG, RUNS, run_id)
+        gen = run_cli(m, tab, job, fields, REG, RUNS, run_id, supervisor=SUP)
     else:
         gen = run_http(m, tab, job, fields, REG, SUP, RUNS, run_id)
     return StreamingResponse(gen, media_type="text/event-stream",

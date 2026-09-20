@@ -4,7 +4,7 @@
   "name": "Admin",
   "blurb": "Runs the other modules for you: batch plans across projects (J1 → HR Steel → Nonlinear, then J2 → CFS …) with every run monitored and logged, a queue that converts a folder of specification PDFs through the Query file manager one after another, and a help desk that answers questions about how Steltic works from the code and docs on this PC or on GitHub.",
   "accent": "#9fb4d6",
-  "order": 5,
+  "order": 90,
   "homepage": "https://github.com/Steltic/steltic_hub",
   "source": {
     "bundled": "steltic_admin",

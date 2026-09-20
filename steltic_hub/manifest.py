@@ -140,6 +140,11 @@ class Run:
     # finished chunk, so a retry repeats at most one window), so the manifest asks for it -- the
     # hub never retries on its own. See _parse_retry for the shape and the limits.
     retry: dict = field(default_factory=dict)
+    # cli only: this run talks to the user's model. The hub refuses to start it without a
+    # connection and hands the connection to the process as STELTIC_LLM_* environment variables
+    # (see README, "A CLI run that talks to the model"), the way it pushes the same connection to a
+    # module server's /api/creds. The process streams what the model says back as event lines.
+    llm: bool = False
 
     @staticmethod
     def parse(d: dict) -> "Run":
@@ -147,6 +152,10 @@ class Run:
         r = Run(**known)
         if r.kind not in ("cli", "http", "none"):
             raise ManifestError(f"run.kind {r.kind!r} must be cli, http or none")
+        if r.llm not in (True, False):
+            raise ManifestError("run.llm must be true or false")
+        if r.llm and r.kind != "cli":
+            raise ManifestError("run.llm is for kind cli (an http run gets the connection through the module's credentials path)")
         if r.kind == "cli" and not r.command:
             raise ManifestError("run.kind cli needs a command")
         if r.stream not in ("sse", "json", "lines"):
@@ -347,7 +356,7 @@ class Manifest:
             "tabs": [{
                 "id": t.id, "title": t.title, "kind": t.kind, "src": t.src,
                 "blurb": t.blurb, "artifacts": t.artifacts, "links": t.links,
-                "run": ({"kind": t.run.kind, "label": t.run.label,
+                "run": ({"kind": t.run.kind, "label": t.run.label, "llm": bool(t.run.llm),
                          "can_cancel": t.run.kind == "cli" or bool(t.run.cancel)} if t.run else None),
                 "fields": [{
                     "id": f.id, "type": f.type, "label": f.label, "placeholder": f.placeholder,

@@ -1001,3 +1001,154 @@ def test_hub_url_is_a_template_for_module_servers():
     ctx = runners.base_ctx(reg.catalog["steltic"], "P", reg)
     assert ctx["hub_url"] == config.hub_url() and ctx["hub_url"].startswith("http://127.0.0.1:")
     assert runners.expand("{hub_url}/api/state", ctx) == ctx["hub_url"] + "/api/state"
+
+
+# ---------------------------------------------------------------- one port per module, for good
+def test_a_port_once_given_to_a_module_stays_its_own(monkeypatch, tmp_path):
+    """Every module page asks for /static/app.js by the same path and the browser caches per origin,
+    so a port that passes from Design variations to Admin serves Variations' script inside Admin's
+    page ("The variations module could not load: Cannot set properties of null"). The supervisor
+    therefore remembers each module's port and never reuses one for another module."""
+    from steltic_hub.runners import ServerSupervisor
+    monkeypatch.setattr(config, "PORTS_FILE", tmp_path / "ports.json")
+    monkeypatch.setattr(config, "PORT_BASE", 49400)
+    monkeypatch.setattr(config, "PORT_SPAN", 6)
+    sup = ServerSupervisor(registry=None)
+    a = sup._alloc_port("steltic_variations")
+    b = sup._alloc_port("steltic_admin")
+    assert a != b and {a, b} <= set(range(49400, 49406))
+    # a restart of the hub: the map on disk gives each module the same port back, in any order
+    sup2 = ServerSupervisor(registry=None)
+    assert sup2._alloc_port("steltic_admin") == b
+    assert sup2._alloc_port("steltic_variations") == a
+    # a third module never gets a port on record for another, even though both are free right now
+    c = sup2._alloc_port("steltic_probabilistic")
+    assert c not in (a, b)
+    saved = json.loads((tmp_path / "ports.json").read_text())
+    assert saved == {"steltic_variations": a, "steltic_admin": b, "steltic_probabilistic": c}
+    # only when the window is exhausted does an idle module's port change hands -- and the map says so
+    monkeypatch.setattr(config, "PORT_SPAN", 3)
+    d = sup2._alloc_port("steltic_grokbot")
+    assert d in (a, b, c)
+    saved = json.loads((tmp_path / "ports.json").read_text())
+    assert saved["steltic_grokbot"] == d and d not in [v for k, v in saved.items() if k != "steltic_grokbot"]
+
+
+def test_bundled_servers_never_let_the_browser_cache_a_stale_asset():
+    """Belt and braces for the same fault: the three bundled servers mark every response no-cache."""
+    for rel in ("steltic_admin/admin/main.py", "steltic_variations/variations/main.py",
+                "steltic_probabilistic/probabilistic/main.py"):
+        src = (config.CATALOG_DIR / rel).read_text(encoding="utf-8")
+        assert "_no_stale_assets" in src and '"Cache-Control"' in src, rel
+
+
+# ---------------------------------------------------------------- Stop on a server that keeps streaming
+def test_stop_drops_a_stream_the_server_keeps_open_after_its_stop_endpoint(monkeypatch):
+    """CFS Steel's /api/stop answers ok and then clears its own cancel flag while releasing the run's
+    quota slot, so the run streams on and the hub's Stop looked dead. After the stop request the hub
+    now waits STOP_GRACE and drops the stream, which the server treats as a disconnect = stop."""
+    import asyncio
+    monkeypatch.setattr(config, "STOP_GRACE", 0.05)
+    posted, closed = [], []
+    class Resp:
+        async def aclose(self): closed.append(True)
+    class CX:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def request(self, method, url, json=None): posted.append((method, url, json))
+    monkeypatch.setattr(runners.httpx, "AsyncClient", CX)
+    async def go():
+        runs = runners.JobRuns()
+        h = {"spec": {"method": "POST", "path": "/api/stop", "body": {"building": "J"}}, "base_url": "http://m",
+             "task": asyncio.current_task(), "resp": Resp()}
+        runs.http["r1"] = h
+        assert await runs.cancel("r1") is True
+        assert posted == [("POST", "http://m/api/stop", {"building": "J"})]
+        assert not closed                    # the server gets its chance first
+        await asyncio.sleep(0.15)
+        assert closed == [True]              # ... and then the stream is dropped
+        # a stream that ended by itself in the meantime is left alone
+        closed.clear(); runs.http["r2"] = dict(h, resp=Resp())
+        assert await runs.cancel("r2") is True
+        runs.http.pop("r2")
+        await asyncio.sleep(0.15)
+        assert not closed
+    asyncio.run(go())
+
+
+# ---------------------------------------------------------------- a CLI run that talks to the model
+def test_cli_event_lines_are_relayed_as_events_and_the_rest_stays_log(monkeypatch, tmp_path):
+    """A CLI module may print one JSON event per line in the agents' vocabulary; the hub relays it as that
+    event (so the browser shows model text, reasoning and tool lines the way it does for the design
+    agents) and everything else as a log line. A hub-owned type (done, start) printed by a module stays a
+    log line, and so does JSON that is not an event."""
+    script = tmp_path / "talk.py"
+    script.write_text("import json, os\n"
+                      "print('starting')\n"
+                      "print(json.dumps({'type': 'reasoning', 'text': 'thinking about drift'}))\n"
+                      "print(json.dumps({'type': 'token', 'text': 'The storey-3 drift '}))\n"
+                      "print(json.dumps({'type': 'tool', 'name': 'search_engineering_standards', 'title': 'ASCE 7 16.4.1.2'}))\n"
+                      "print(json.dumps({'type': 'done', 'ok': True}))\n"
+                      "print(json.dumps({'not': 'an event'}))\n"
+                      "print('KEY=' + os.environ.get('STELTIC_LLM_API_KEY', '(unset)') + ' MODEL=' + os.environ.get('STELTIC_LLM_MODEL', '(unset)'))\n"
+                      "print('RAG=' + os.environ.get('RAG_API_URL', '(unset)'))\n", encoding="utf-8")
+    m = _retry_module(script, llm=True, env={"RAG_API_URL": "{server.steltic_grokbot}/query"})
+    raw = _drive_run(monkeypatch, tmp_path, m)
+    assert [e["type"] for e in _events(raw)][:6] == ["start", "log", "reasoning", "token", "tool", "log"]
+    assert _events(raw, "reasoning")[0]["text"] == "thinking about drift"
+    assert _events(raw, "tool")[0]["name"] == "search_engineering_standards"
+    logs = [e["text"] for e in _events(raw, "log")]
+    assert '{"type": "done", "ok": true}' in logs and '{"not": "an event"}' in logs
+    # driven without a supervisor: no connection and no standards server to resolve -> unset, not a literal template
+    assert "KEY=(unset) MODEL=(unset)" in logs and "RAG=(unset)" in logs
+    assert runners.event_line("") is None and runners.event_line('{"type": "token"') is None
+
+
+def test_a_cli_run_marked_llm_gets_the_connection_and_the_servers_it_names(monkeypatch, tmp_path):
+    """run.llm hands the hub's one connection to the process as STELTIC_LLM_*; {server.<id>} in the run's
+    environment starts that server and substitutes its address -- the same two things the hub does for an
+    agent server, done for a process."""
+    import asyncio
+    script = tmp_path / "env.py"
+    script.write_text("import os\nfor k in ('STELTIC_LLM_BASE_URL', 'STELTIC_LLM_API_KEY', 'STELTIC_LLM_MODEL', 'RAG_API_URL'):\n"
+                      "    print(k + '=' + os.environ.get(k, '(unset)'))\n", encoding="utf-8")
+    m = _retry_module(script, llm=True, env={"RAG_API_URL": "{server.steltic_grokbot}/query"})
+    class Reg:
+        def is_installed(self, mid): return True
+        def name(self, mid): return mid
+        def module_root(self, mid): return tmp_path
+        def manifest(self, mid):
+            return Manifest.parse({"schema": 1, "id": mid, "name": mid, "env": {"python": "3.12", "install": []},
+                                   "server": {"command": ["x"]}, "tabs": [{"id": "t", "kind": "files"}]}, "t")
+    class Sup:
+        ports = {}
+        def connection(self): return {"base_url": "https://llm.example/v1", "api_key": "sk-secret", "model": "m-1"}
+        async def ensure(self, mid): return "http://127.0.0.1:8419"
+    monkeypatch.setattr(runners.envs, "python_bin", lambda mid: pathlib.Path(sys.executable))
+    monkeypatch.setattr(runners.envs, "env_ready", lambda mid: True)
+    monkeypatch.setattr(runners, "build_ctx", lambda *a, **k: {"job_dir": str(tmp_path), "job": "J"})
+    async def collect():
+        return [ev async for ev in runners.run_cli(m, m.tabs[0], "J", {}, Reg(), runners.JobRuns(), "r1", supervisor=Sup())]
+    logs = [e["text"] for e in _events(asyncio.run(collect()), "log")]
+    assert "STELTIC_LLM_BASE_URL=https://llm.example/v1" in logs and "STELTIC_LLM_API_KEY=sk-secret" in logs
+    assert "STELTIC_LLM_MODEL=m-1" in logs and "RAG_API_URL=http://127.0.0.1:8419/query" in logs
+    assert runners.servers_referenced(m, m.tabs[0]) == ["steltic_grokbot"]
+
+
+def test_run_llm_is_declared_only_where_it_means_something():
+    base = {"schema": 1, "id": "x", "name": "X", "env": {"python": "3.12", "install": []},
+            "tabs": [{"id": "t", "kind": "form", "run": {"kind": "http", "path": "/api/run", "llm": True}}]}
+    with pytest.raises(ManifestError):
+        Manifest.parse(base, "t")
+    base["tabs"][0]["run"] = {"kind": "cli", "command": ["-m", "x"], "llm": "yes"}
+    with pytest.raises(ManifestError):
+        Manifest.parse(base, "t")
+    base["tabs"][0]["run"] = {"kind": "cli", "command": ["-m", "x"], "llm": True}
+    assert Manifest.parse(base, "t").to_json()["tabs"][0]["run"]["llm"] is True
+    # the catalog: the Nonlinear module's Review tab is the one that uses it, and it names the standards server
+    cat = load_catalog(config.CATALOG_DIR)
+    review = next(t for t in cat["steltic_nonlinear"].tabs if t.id == "review")
+    assert review.run.llm is True and review.run.env["RAG_API_URL"] == "{server.steltic_grokbot}/query"
+    assert runners.servers_referenced(cat["steltic_nonlinear"], review) == ["steltic_grokbot"]
+    assert [t.id for t in cat["steltic_nonlinear"].tabs if t.run and t.run.llm] == ["review"]
