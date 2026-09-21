@@ -1192,3 +1192,89 @@ def test_run_continues_names_the_tab_a_resume_picks_up():
         cont = next(t for t in cat[mid].tabs if t.id == "continue")
         assert cont.run.continues == "design" and cont.run.body.get("resume") is True
         assert [t.id for t in cat[mid].tabs if t.run and t.run.continues] == ["continue"]
+
+
+def test_every_nonlinear_tab_that_reads_the_design_package_stages_it():
+    """2026-09-21: Site hazard pressed on a project whose HR Steel design had never been staged died with
+    `no model_opensees.py under <job_dir>` -- only Run and Inspect copied the design into the project folder.
+    Hazard, Criteria and Mesh read the package too (periods, cfg, the model), so they stage it the same way."""
+    cat = load_catalog(config.CATALOG_DIR)
+    m = cat["steltic_nonlinear"]
+    for tid in ("run", "inspect", "hazard", "criteria", "mesh"):
+        t = next(t for t in m.tabs if t.id == tid)
+        assert t.run.stage and t.run.stage[0]["from"] == "{f.package}" and t.run.stage[0]["required"], tid
+        assert "HR Steel" in t.run.stage[0]["missing"], tid
+        pkg = next(f for f in t.fields if f.id == "package")
+        assert pkg.type == "file" and pkg.default == "{out.steltic}", tid
+    for tid in ("review", "compare"):                     # these read what a Run wrote, not the design
+        t = next(t for t in m.tabs if t.id == tid)
+        assert not t.run.stage, tid
+
+
+# ---------------------------------------------------------------- the rail's "running"
+def test_state_says_which_module_and_tab_is_running_not_just_that_something_is():
+    """`/api/state` used to report `{run-uuid: True}` -- true, and useless.
+
+    The UI keys its own run map `"<module>.<tab>"` (runKey), so it could not match a uuid to a
+    card and computed the rail's "running..." from its own local map instead. That map belongs to
+    one browser tab: it went dark on a reload and never lit for a run started in another window.
+    """
+    runs = runners.JobRuns()
+    assert runs.live_tabs() == {}
+    runs.began("deadbeefcafe", "steltic", "design")
+    runs.began("0123456789ab", "steltic_grokbot", "convert")
+    assert runs.live_tabs() == {"steltic.design": True, "steltic_grokbot.convert": True}
+    runs.ended("deadbeefcafe")
+    assert runs.live_tabs() == {"steltic_grokbot.convert": True}
+    runs.ended("deadbeefcafe")                       # ending twice is not an error
+    runs.ended("never-started")
+    assert runs.live_tabs() == {"steltic_grokbot.convert": True}
+
+
+def test_state_reports_the_live_tabs_the_ui_can_match():
+    from steltic_hub.main import app, RUNS
+    from fastapi.testclient import TestClient
+    RUNS.began("feedfacefeed", "steltic_nonlinear", "run")
+    try:
+        with TestClient(app) as c:
+            running = c.get("/api/state").json()["running"]
+        assert running.get("steltic_nonlinear.run") is True, running
+        assert all("." in k for k in running), f"keys must be <module>.<tab>, got {list(running)}"
+    finally:
+        RUNS.ended("feedfacefeed")
+
+
+def test_a_server_backed_module_is_visible_in_the_rail():
+    """Admin, Design variations and Probabilistic do their work in a module server, not in a run,
+    so the rail had nothing to light up. The card carries `has_server`/`server_up`; the rail now
+    reads them, which is what this asserts is still being published."""
+    from steltic_hub.main import app
+    from fastapi.testclient import TestClient
+    with TestClient(app) as c:
+        mods = {m["id"]: m for m in c.get("/api/state").json()["modules"]}
+    for mid in ("steltic_admin", "steltic_variations", "steltic_probabilistic"):
+        assert mid in mods, f"{mid} missing from /api/state"
+        assert mods[mid]["has_server"] is True, f"{mid} is server-backed"
+        assert "server_up" in mods[mid], f"{mid} must publish server_up for the rail"
+
+
+def test_the_design_tab_can_revise_itself_from_the_nonlinear_review():
+    """The Review tab (steltic_nonlinear) writes review.md into the PROJECT folder; HR Steel's
+    Revise tab reads it from there and continues the design with it. The two modules meet only in
+    that shared folder -- neither calls the other, which is what keeps them independent.
+
+    `continues` is deliberately NOT set: it means "this tab resumes an interrupted run of that tab",
+    which is how Admin's batch picks a design back up. A revision is a new, deliberate step.
+    """
+    cat = load_catalog(config.CATALOG_DIR)
+    rev = next(t for t in cat["steltic"].tabs if t.id == "revise")
+    assert rev.run.kind == "http" and rev.run.path == "/api/run"
+    assert rev.run.body.get("revise_from_review") is True
+    assert rev.run.body.get("resume") is True
+    assert not rev.run.continues, "a revision is not a resume of an interrupted design"
+    assert [f.id for f in rev.fields] == ["job", "notes"]
+    assert {a["path"] for a in rev.artifacts} == {"report.html", "viewer_3d.html"}
+    # the other half of the handshake: the Review tab must still write review.md into the job folder
+    review = next(t for t in cat["steltic_nonlinear"].tabs if t.id == "review")
+    assert "review.md" in {a["path"] for a in review.artifacts}
+    assert review.run.cwd == "{job_dir}"

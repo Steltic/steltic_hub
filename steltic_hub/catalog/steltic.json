@@ -357,6 +357,60 @@
       ]
     },
     {
+      "id": "revise",
+      "title": "Revise reports",
+      "kind": "form",
+      "blurb": "Take the review the Nonlinear module's Review tab wrote for this project and revise the design record against it. The review grounds every clause it cites in the Query file manager's corpus -- the licensed PDFs on this PC -- so a citation that carries a page number was actually read from the standard. This step adopts those, in place of values the design had flagged for verification, and leaves anything the review marks (UNVERIFIED) flagged. A manual step: run Review first, read it, then press this.",
+      "run": {
+        "kind": "http",
+        "method": "POST",
+        "path": "/api/run",
+        "stream": "sse",
+        "label": "Revise reports with Review report",
+        "cancel": {
+          "method": "POST",
+          "path": "/api/stop",
+          "body": {
+            "building": "{job}"
+          }
+        },
+        "body": {
+          "building": "{job}",
+          "brief": "{f.notes}",
+          "resume": true,
+          "revise_from_review": true
+        }
+      },
+      "fields": [
+        {
+          "id": "job",
+          "type": "project",
+          "label": "Project",
+          "required": true
+        },
+        {
+          "id": "notes",
+          "type": "textarea",
+          "label": "Anything to add (optional)",
+          "rows": 4,
+          "placeholder": "e.g. accept the review's storey-3 finding but keep the W24 columns; say why in the report.",
+          "help": "Goes to the agent alongside the review. Leave empty to apply the review as written."
+        }
+      ],
+      "artifacts": [
+        {
+          "label": "Report",
+          "path": "report.html",
+          "accent": "#ffa15c"
+        },
+        {
+          "label": "3D model",
+          "path": "viewer_3d.html",
+          "accent": "#ffa15c"
+        }
+      ]
+    },
+    {
       "id": "viewers",
       "title": "Viewers",
       "kind": "viewers",
