@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Steltic
+GenericName=Structural steel design hub
+Comment=Install and run the Steltic design modules
+# Absolute path required by the desktop spec. install.sh rewrites this line to where you cloned.
+Exec=/opt/steltic_hub/unix/steltic.sh
+Icon=steltic
+Terminal=false
+Categories=Engineering;Science;Development;
+StartupNotify=true

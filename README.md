@@ -41,15 +41,45 @@ publishing a repo; updating one is `git pull` plus a reinstall into its own venv
 
 ## Install and run
 
+**Windows**
+
 ```powershell
 git clone https://github.com/Steltic/steltic_hub
 cd steltic_hub
 windows\Steltic.bat            # first run fetches uv + Python + the hub, then opens the window
 ```
 
-Nothing needs to be installed first — no Python, no uv, no Docker. First run pulls about 20 MB;
-each module you install from the Modules tab pulls its own dependencies (openseespy-based modules
-are ~400 MB each).
+**Linux and macOS**
+
+```bash
+git clone https://github.com/Steltic/steltic_hub
+cd steltic_hub
+./unix/steltic.sh              # same three steps, same flags
+```
+
+`unix/steltic.sh` is the counterpart of `windows/Steltic.ps1`, step for step, and takes the same
+switches in POSIX spelling: `--reinstall`, `--restart`, `--no-window`, `--bootstrap-only`,
+`--console`, `--port N`. Optionally `./unix/install.sh` links it as `~/.local/bin/steltic` and, on
+Linux, adds a desktop entry, so `steltic` from anywhere or the application menu both work;
+`./unix/install.sh --remove` undoes that and leaves your data alone.
+
+Nothing needs to be installed first — no Python, no uv, no Docker; on Linux you need `curl` or
+`wget`, which you almost certainly have. First run pulls about 20 MB; each module you install from
+the Modules page pulls its own dependencies (openseespy-based modules are ~400 MB each).
+
+Where things land differs by platform, and the launcher and the hub agree on it
+(`steltic_hub/config.py`):
+
+| | data root (`STELTIC_HUB_DATA`) |
+|---|---|
+| Windows | `%LOCALAPPDATA%\Steltic` |
+| macOS | `~/Library/Application Support/Steltic` |
+| Linux | `$XDG_DATA_HOME/Steltic`, or `~/.local/share/Steltic` |
+
+For the window itself the launcher asks a Chromium-family browser for a chromeless `--app=` window
+— Edge on Windows, Chrome/Edge/Brave/Chromium on macOS or Linux — and falls back to `open` /
+`xdg-open` / your default browser. None of that is required: `--no-window` starts the server alone
+and prints the URL.
 
 Cross-platform / developer run:
 
@@ -59,6 +89,12 @@ steltic-hub                    # http://127.0.0.1:8300
 steltic-hub --bootstrap        # headless: provision every module, then exit
 steltic-hub --restart          # stop the hub already on the port and start this one in its place
 ```
+
+One platform note worth knowing before you file a bug: OpenSees wheels are published for Linux,
+macOS and Windows, but not for every architecture — on Apple silicon `openseespy` installs under
+Rosetta or not at all depending on the release, so a module that needs it may refuse to provision
+where the hub itself runs perfectly well. The Modules page reports that per module rather than
+failing the hub.
 
 ### After a git pull or an edit: the hub restarts itself
 

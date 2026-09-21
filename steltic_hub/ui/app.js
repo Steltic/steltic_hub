@@ -35,6 +35,7 @@ const S = {
   hub: {},           // the hub process: {version, pid, started, stale, restartable} (see /healthz)
   sac: null,         // Windows 11 Smart App Control: 'on' | 'evaluation' | 'off' | null (not Windows)
   runs: {},          // `${mod}.${tab}` -> live/finished run state (survives tab switches)
+  live: {},          // `${mod}.${tab}` -> true, straight from the hub: runs THIS tab did not start
   forms: {},         // `${mod}.${tab}` -> in-memory field values (files/attachments live here only)
   installLogs: {},   // module id -> the log element of the last install/update
   optional: {},      // module id -> {group: present}
@@ -155,6 +156,10 @@ async function refresh() {
   S.modules = d.modules; S.jobs = d.jobs; S.dataDir = d.data_dir; S.conn = d.connection; S.version = d.version || '';
   S.hub = d.hub || {}; showStale(S.hub);
   S.sac = d.smart_app_control || null;
+  // What the HUB says is running, keyed "<module>.<tab>" like runKey(). S.runs only ever holds runs
+  // this browser tab started, so on its own the rail went dark after a reload and never lit for a
+  // run begun in another window.
+  S.live = d.running || {};
   if (S.project && !S.jobs.some(j => j.name === S.project)) {
     // a project that no longer exists on disk (deleted, or a different data dir) must not stay active
     S.project = '';
@@ -179,8 +184,14 @@ function renderRail() {
   for (const m of S.modules) {
     const st = m.status || {};
     const bad = st.env_ready && st.env && st.env.ready === false;
-    const running = m.tabs.some(t => (S.runs[runKey(m.id, t.id)] || {}).status === 'running');
+    const running = m.tabs.some(t => (S.runs[runKey(m.id, t.id)] || {}).status === 'running'
+                                  || S.live[runKey(m.id, t.id)]);
+    // Admin, Design variations and Probabilistic do their work in a module server rather than in a
+    // run, so nothing was ever going to light up for them: `server_up` was only used for the pill on
+    // the Modules page. An up server is not "busy", so it says so in its own words.
+    const serverUp = !!(m.has_server && m.server_up);
     const sub = running ? 'running…'
+      : serverUp ? 'server up'
       : !st.installed ? 'not installed'
       : !st.env_ready ? 'environment missing'
       : bad ? 'environment problem'
@@ -312,6 +323,7 @@ function renderForm(body, m, t) {
   let run = S.runs[key];
   if (!run) run = S.runs[key] = newRunState();
   const status = el('span', { class: 'status' });
+  let extraBtns = [];          // filled below; `paint` closes over it, so it must exist first
   const runBtn = el('button', { class: 'primary' }, (t.run && t.run.label) || 'Run');
   const stopBtn = el('button', { class: 'ghost danger', style: 'display:none' }, 'Stop');
   const arts = el('div', { class: 'arts' });
@@ -320,6 +332,7 @@ function renderForm(body, m, t) {
     status.className = 'status ' + ({ running: '', done: 'ok', failed: 'bad', cancelled: 'bad', paused: 'warn' }[r.status] || '');
     status.textContent = r.statusText || '';
     runBtn.disabled = r.status === 'running' || unmet.length > 0;
+    for (const b of extraBtns) b.disabled = r.status === 'running' || unmet.length > 0;
     stopBtn.style.display = (r.status === 'running' && t.run && t.run.can_cancel) ? '' : 'none';
     run.usageEl.style.display = r.usageText ? '' : 'none'; run.usageEl.textContent = r.usageText || '';
     run.reasonWrap.style.display = run.reasonEl.childNodes.length ? '' : 'none';
@@ -347,9 +360,29 @@ function renderForm(body, m, t) {
     };
   }
 
-  const acts = el('div', { class: 'actions' }, t.run ? runBtn : null, t.run ? stopBtn : null, status);
+  // Extra buttons declared by the manifest (`actions`), beside the main one: the same fields and
+  // the same log pane, a different thing to do with them. Each may carry a note of its own, which
+  // is where "come back after X" belongs.
+  extraBtns = (t.actions || []).map(a => {
+    const b = el('button', { class: 'ghost' }, a.label || a.id);
+    b.onclick = () => {
+      const miss = t.fields.filter(f => f.required && !f.has_default && f.type !== 'checkbox' &&
+        (vals[f.id] === undefined || vals[f.id] === null || String(vals[f.id]).trim() === ''));
+      if (miss.length) { status.className = 'status bad'; status.textContent = 'Required: ' + miss.map(f => f.label).join(', '); return; }
+      if (!S.project) { status.className = 'status bad'; status.textContent = 'Pick or create a project first'; return; }
+      if (((m.wants_credentials && a.kind === 'http') || a.llm) && !S.conn) { openConnection(); return; }
+      startRun(m, t, key, { ...vals }, paint, fieldApi, a.id);
+    };
+    run.extra = (run.extra || []).concat(b);
+    return b;
+  });
+  const acts = el('div', { class: 'actions' }, t.run ? runBtn : null, ...extraBtns, t.run ? stopBtn : null, status);
   if ((t.artifacts && t.artifacts.length) || (t.links && t.links.length))
     acts.append(el('button', { class: 'ghost', onclick: () => showArtifacts(arts, m, t) }, 'Show outputs'));
+  for (const a of (t.actions || [])) {
+    if (!a.info) continue;
+    pane.append(el('div', { class: 'note' }, el('b', {}, (a.label || a.id) + ' — '), a.info));
+  }
   pane.append(acts, arts, run.lights, run.logWrap, run.reasonWrap, run.usageEl);
   body.append(pane);
   paint();
@@ -496,7 +529,7 @@ function handleEvent(r, ev, ctx) {
   }
 }
 
-async function startRun(m, t, key, vals, paint, fieldApi) {
+async function startRun(m, t, key, vals, paint, fieldApi, action) {
   const r = S.runs[key];
   r.logEl.innerHTML = ''; r.reasonEl.innerHTML = ''; r.tokenLine = null; r.reasonLine = null;
   r.status = 'running'; r.statusText = 'starting…'; r.runId = null; r.usageText = ''; r.sawError = false; r.hasLights = false;
@@ -515,7 +548,7 @@ async function startRun(m, t, key, vals, paint, fieldApi) {
   try {
     await stream(`/api/run/${m.id}/${t.id}`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ job: project, fields: vals })
+      body: JSON.stringify({ job: project, fields: vals, ...(action ? { action } : {}) })
     }, ev => { handleEvent(r, ev, ctx); r.paint(); });
   } catch (e) {
     r.logLine('e', '✖ connection to the hub lost: ' + e);

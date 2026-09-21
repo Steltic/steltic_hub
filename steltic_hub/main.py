@@ -5,6 +5,7 @@ knows about them only through manifests. The desktop shell (Tauri/Electron/none)
 a window on this server, which is why the shell stays a swappable, late decision.
 """
 from __future__ import annotations
+import dataclasses
 import asyncio, json, mimetypes, os, queue, subprocess, sys, threading, time, uuid, pathlib
 from contextlib import asynccontextmanager
 import httpx
@@ -279,7 +280,9 @@ async def state():
     jobs_list = await loop.run_in_executor(None, jobs.list_jobs)
     return {"modules": mods, "jobs": jobs_list, "data_dir": str(config.DATA),
             "uv": envs.uv_path() or "", "connection": bool(_CONNECTION),
-            "running": {rid: True for rid in list(RUNS.procs) + list(RUNS.http)},
+            # Keyed "<module>.<tab>", which is exactly the key the UI builds with runKey(). The old
+            # shape was {run-uuid: True}: true, but useless to a client that knows modules and tabs.
+            "running": RUNS.live_tabs(),
             "version": __import__("steltic_hub").__version__, "hub": hub_info(),
             "smart_app_control": sac.state()}          # Windows 11: 'on' blocks PyTorch / OpenSees (WinError 4551)
 
@@ -529,6 +532,15 @@ async def run(mod_id: str, tab_id: str, request: Request):
     tab = next((t for t in m.tabs if t.id == tab_id), None)
     if not tab or not tab.run or tab.run.kind == "none":
         raise HTTPException(400, f"{mod_id}/{tab_id} has nothing to run")
+    # A tab may carry more than one button (manifest `actions`); the body names which was pressed.
+    # Swapping it into a copy of the tab keeps every path below -- fields, needs, optional
+    # components, staging, the runners -- reading `tab.run` exactly as before.
+    act = str(body.get("action") or "").strip()
+    if act:
+        chosen = next((a for a in tab.actions if a.id == act), None)
+        if chosen is None:
+            raise HTTPException(400, f"{mod_id}/{tab_id} has no action {act!r}")
+        tab = dataclasses.replace(tab, run=chosen.run)
     # A module that declares `needs` gets those modules' checkout paths as {need.<id>} -- the
     # nonlinear module points its engine variable at {need.steltic}/steel_engine. Without the
     # dependency installed that expands to a path that does not exist, and the run fails deep
@@ -556,6 +568,7 @@ async def run(mod_id: str, tab_id: str, request: Request):
         return _sse_error("Set your LLM connection first (the Connection button in the title bar).")
 
     run_id = uuid.uuid4().hex[:12]
+    RUNS.began(run_id, m.id, tab.id)       # so /api/state can say WHICH module is busy, not just that one is
     jobs.job_dir(job)                      # a real run is what creates the project folder
     if tab.run.kind == "cli":
         gen = run_cli(m, tab, job, fields, REG, RUNS, run_id, supervisor=SUP)

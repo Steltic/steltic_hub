@@ -182,6 +182,22 @@ class Run:
 
 
 @dataclass
+class Action:
+    """A second (third, ...) button in a tab, beside its main `run`.
+
+    Some steps belong together on one screen rather than in two tabs the engineer hops between:
+    the Nonlinear Run tab does the OpenSees work with no standards lookups, and its Revise button
+    re-renders those same reports with the live corpus behind them. Same fields, same log pane,
+    same outputs -- a different thing to do with them. `info` is the note shown under the buttons,
+    which is where a "do this after X" belongs.
+    """
+    id: str
+    run: "Run"
+    info: str = ""
+    label: str = ""
+
+
+@dataclass
 class Tab:
     """One tab inside a module.
 
@@ -201,6 +217,7 @@ class Tab:
     links: list = field(default_factory=list)       # [{label, path}] paths on the module server, e.g. a download
     blurb: str = ""
     requires_optional: list = field(default_factory=list)   # optional-component groups (manifest `optional`) a run needs
+    actions: list = field(default_factory=list)     # extra buttons beside `run` (see Action)
 
     @staticmethod
     def parse(d: dict) -> "Tab":
@@ -224,6 +241,24 @@ class Tab:
                 raise ManifestError(f"tab {t.id}: field {f.id} fills unknown field {f.fills['target']!r}")
             if f.text_target and f.text_target not in ids:
                 raise ManifestError(f"tab {t.id}: field {f.id} targets unknown field {f.text_target!r}")
+        for a in (d.get("actions") or []):
+            if not isinstance(a, dict) or not a.get("id"):
+                raise ManifestError(f"tab {t.id}: every action needs an id")
+            if not a.get("run"):
+                raise ManifestError(f"tab {t.id}: action {a['id']!r} has nothing to run")
+            if not t.run:
+                raise ManifestError(f"tab {t.id}: actions need a main `run` to sit beside")
+            r = Run.parse(a["run"])
+            if r.continues:
+                raise ManifestError(f"tab {t.id}: action {a['id']!r} may not declare `continues` -- "
+                                    "that names the tab a resume picks up, and an action is not a tab")
+            t.actions.append(Action(id=a["id"], run=r, info=a.get("info", ""),
+                                    label=a.get("label") or r.label or a["id"].capitalize()))
+        aids = [a.id for a in t.actions]
+        if len(aids) != len(set(aids)):
+            raise ManifestError(f"tab {t.id}: duplicate action ids")
+        if "run" in aids:
+            raise ManifestError(f"tab {t.id}: 'run' is the main button, not an action id")
         for k in (t.run.retry.get("then_set") if t.run else None) or {}:
             # a retry override on a field that does not exist would change nothing, silently
             if k not in ids:
@@ -374,6 +409,9 @@ class Manifest:
                 "run": ({"kind": t.run.kind, "label": t.run.label, "llm": bool(t.run.llm),
                          "continues": t.run.continues or None,
                          "can_cancel": t.run.kind == "cli" or bool(t.run.cancel)} if t.run else None),
+                "actions": [{"id": a.id, "label": a.label, "info": a.info, "kind": a.run.kind,
+                             "llm": bool(a.run.llm),
+                             "can_cancel": a.run.kind == "cli" or bool(a.run.cancel)} for a in t.actions],
                 "fields": [{
                     "id": f.id, "type": f.type, "label": f.label, "placeholder": f.placeholder,
                     "help": f.help, "required": f.required,

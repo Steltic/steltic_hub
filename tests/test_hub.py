@@ -1256,25 +1256,52 @@ def test_a_server_backed_module_is_visible_in_the_rail():
         assert mid in mods, f"{mid} missing from /api/state"
         assert mods[mid]["has_server"] is True, f"{mid} is server-backed"
         assert "server_up" in mods[mid], f"{mid} must publish server_up for the rail"
+# ---------------------------------------------------------------- a tab with more than one button
+def test_a_tab_may_carry_extra_buttons_beside_its_run():
+    """`actions` lets one tab offer two things to do with the same fields and the same log pane.
 
-
-def test_the_design_tab_can_revise_itself_from_the_nonlinear_review():
-    """The Review tab (steltic_nonlinear) writes review.md into the PROJECT folder; HR Steel's
-    Revise tab reads it from there and continues the design with it. The two modules meet only in
-    that shared folder -- neither calls the other, which is what keeps them independent.
-
-    `continues` is deliberately NOT set: it means "this tab resumes an interrupted run of that tab",
-    which is how Admin's batch picks a design back up. A revision is a new, deliberate step.
+    The Nonlinear Run tab needs it: `Run analyses` does the OpenSees work with no standards
+    lookups, and `Revise reports` re-renders those reports with the live corpus behind them. Two
+    tabs would make the engineer hop between them for one job.
     """
+    srv = {"command": ["-m", "x"], "health": "/healthz"}
+    def mk(actions):
+        return {"schema": 1, "id": "x", "name": "X", "env": {"python": "3.12", "install": []}, "server": srv,
+                "tabs": [{"id": "go", "kind": "form", "run": {"kind": "cli", "command": ["-m", "x"]},
+                          "actions": actions}]}
+    m = Manifest.parse(mk([{"id": "again", "label": "Again", "info": "after the first one",
+                            "run": {"kind": "cli", "command": ["-m", "x", "again"]}}]), "t")
+    a = m.tabs[0].actions[0]
+    assert a.id == "again" and a.label == "Again" and a.info == "after the first one"
+    assert a.run.command[-1] == "again"
+    j = m.to_json()["tabs"][0]["actions"][0]
+    assert j["id"] == "again" and j["label"] == "Again" and j["can_cancel"] is True
+    for bad in ([{"run": {"kind": "cli", "command": ["-m", "x"]}}],                      # no id
+                [{"id": "a"}],                                                            # nothing to run
+                [{"id": "run", "run": {"kind": "cli", "command": ["-m", "x"]}}],          # the main button's name
+                [{"id": "a", "run": {"kind": "cli", "command": ["-m", "x"]}},
+                 {"id": "a", "run": {"kind": "cli", "command": ["-m", "x"]}}],            # duplicate
+                [{"id": "a", "run": {"kind": "cli", "command": ["-m", "x"], "continues": "go"}}]):
+        with pytest.raises(ManifestError):
+            Manifest.parse(mk(bad), "t")
+    # an action with no main run to sit beside is just a run
+    with pytest.raises(ManifestError):
+        Manifest.parse({"schema": 1, "id": "x", "name": "X", "env": {"python": "3.12", "install": []}, "server": srv,
+                        "tabs": [{"id": "go", "kind": "form",
+                                  "actions": [{"id": "a", "run": {"kind": "cli", "command": ["-m", "x"]}}]}]}, "t")
+
+
+def test_the_nonlinear_run_tab_offers_revise_beside_run_analyses():
+    """Run analyses does no standards lookups, so its reports mark every clause UNVERIFIED. Revise
+    re-renders them against the review, grounded in the live corpus. Same tab, same project."""
     cat = load_catalog(config.CATALOG_DIR)
-    rev = next(t for t in cat["steltic"].tabs if t.id == "revise")
-    assert rev.run.kind == "http" and rev.run.path == "/api/run"
-    assert rev.run.body.get("revise_from_review") is True
-    assert rev.run.body.get("resume") is True
-    assert not rev.run.continues, "a revision is not a resume of an interrupted design"
-    assert [f.id for f in rev.fields] == ["job", "notes"]
-    assert {a["path"] for a in rev.artifacts} == {"report.html", "viewer_3d.html"}
-    # the other half of the handshake: the Review tab must still write review.md into the job folder
+    run = next(t for t in cat["steltic_nonlinear"].tabs if t.id == "run")
+    assert run.run.label == "Run analyses"
+    rev = next(a for a in run.actions if a.id == "revise")
+    assert rev.label == "Revise reports"
+    assert rev.run.env.get("RAG_API_URL") == "{server.steltic_grokbot}/query", "it must query the live corpus"
+    assert rev.run.llm is True
+    assert "Review" in rev.info and "UNVERIFIED" in rev.info, "the note must say to run Review first"
+    # and the Review tab it waits on still writes review.md into the same project folder
     review = next(t for t in cat["steltic_nonlinear"].tabs if t.id == "review")
-    assert "review.md" in {a["path"] for a in review.artifacts}
-    assert review.run.cwd == "{job_dir}"
+    assert "review.md" in {a["path"] for a in review.artifacts} and review.run.cwd == "{job_dir}"

@@ -552,6 +552,20 @@ class JobRuns:
         self.procs: dict[str, subprocess.Popen] = {}
         self.http: dict[str, dict] = {}
         self.cancelled: set[str] = set()
+        # run id -> "<module>.<tab>". The run id is a uuid, so /api/state could only ever say THAT
+        # SOMETHING was running, never what -- which is why the rail's "running..." was computed from
+        # the browser's own run map and went dark on a reload, or for a run begun in another window.
+        self.where: dict[str, str] = {}
+
+    def began(self, run_id: str, mod_id: str, tab_id: str) -> None:
+        self.where[run_id] = f"{mod_id}.{tab_id}"
+
+    def ended(self, run_id: str) -> None:
+        self.where.pop(run_id, None)
+
+    def live_tabs(self) -> dict[str, bool]:
+        """Every "<module>.<tab>" with a run in flight, in the key the UI already builds itself."""
+        return {v: True for v in self.where.values()}
 
     async def cancel(self, run_id: str) -> bool:
         pr = self.procs.get(run_id)
@@ -871,6 +885,7 @@ async def run_cli(m: Manifest, tab: Tab, job: str, fields: dict, registry, runs:
                          "ok": rc == 0 and not cancelled, "cancelled": cancelled, "run_id": run_id})
     finally:
         runs.procs.pop(run_id, None)
+        runs.ended(run_id)
         runs.cancelled.discard(run_id)
         if pr is not None and pr.poll() is None:
             _terminate(pr, grace=2.0)
@@ -979,6 +994,7 @@ async def run_http(m: Manifest, tab: Tab, job: str, fields: dict, registry,
         outcome["ok"] = False
     finally:
         runs.http.pop(run_id, None)
+        runs.ended(run_id)
         cancelled = run_id in runs.cancelled
         runs.cancelled.discard(run_id)
         ok = outcome["ok"] if outcome["ok"] is not None else (outcome["seen"] and not cancelled)
