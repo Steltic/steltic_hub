@@ -540,7 +540,10 @@ async def run(mod_id: str, tab_id: str, request: Request):
         chosen = next((a for a in tab.actions if a.id == act), None)
         if chosen is None:
             raise HTTPException(400, f"{mod_id}/{tab_id} has no action {act!r}")
-        tab = dataclasses.replace(tab, run=chosen.run)
+        # ...and only the fields that action declared: the tab's fields belong to the main run, and
+        # handing them to a different program is how `snl revise` got --site-class and exited 2.
+        keep = tab.fields if chosen.fields == ["*"] else [f for f in tab.fields if f.id in chosen.fields]
+        tab = dataclasses.replace(tab, run=chosen.run, fields=keep)
     # A module that declares `needs` gets those modules' checkout paths as {need.<id>} -- the
     # nonlinear module points its engine variable at {need.steltic}/steel_engine. Without the
     # dependency installed that expands to a path that does not exist, and the run fails deep

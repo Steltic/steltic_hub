@@ -1305,3 +1305,67 @@ def test_the_nonlinear_run_tab_offers_revise_beside_run_analyses():
     # and the Review tab it waits on still writes review.md into the same project folder
     review = next(t for t in cat["steltic_nonlinear"].tabs if t.id == "review")
     assert "review.md" in {a["path"] for a in review.artifacts} and review.run.cwd == "{job_dir}"
+
+
+def test_an_action_only_gets_the_fields_it_asked_for():
+    """The tab's fields are drawn for its MAIN run; a second button is usually a different program.
+
+    The Nonlinear Run tab has twenty-one fields and `snl revise <job>` takes none of them, so the
+    first Revise in the wild went out as `snl revise <job> --site-class D --n-records 11 --dt 0.01
+    ...` and argparse exited 2 before the module did any work. An action now says what it takes.
+    """
+    import dataclasses
+    from steltic_hub.runners import cli_args
+    srv = {"command": ["-m", "x"], "health": "/healthz"}
+    fields = [{"id": "job", "type": "project", "label": "Project", "required": True},
+              {"id": "n", "type": "number", "label": "N", "arg": "--n"},
+              {"id": "mode", "type": "text", "label": "Mode", "arg": "--mode"}]
+
+    def mk(action):
+        return {"schema": 1, "id": "x", "name": "X", "env": {"python": "3.12", "install": []}, "server": srv,
+                "tabs": [{"id": "go", "kind": "form", "fields": fields,
+                          "run": {"kind": "cli", "command": ["-m", "x"]}, "actions": [action]}]}
+
+    sent = {"job": "J", "n": 11, "mode": "fast"}
+    run_cmd = {"kind": "cli", "command": ["-m", "x", "again"]}
+
+    def flags(action):
+        t = Manifest.parse(mk(action), "t").tabs[0]
+        a = t.actions[0]
+        keep = t.fields if a.fields == ["*"] else [f for f in t.fields if f.id in a.fields]
+        return cli_args(dataclasses.replace(t, run=a.run, fields=keep), sent, {"job": "J"})
+
+    # the main run still gets everything
+    main = Manifest.parse(mk({"id": "a", "run": run_cmd}), "t").tabs[0]
+    assert cli_args(main, sent, {"job": "J"}) == ["--n", "11", "--mode", "fast"]
+    # an action that says nothing gets no field flags -- the command's own arguments only
+    assert flags({"id": "a", "run": run_cmd}) == []
+    # ...and one that names fields gets exactly those, in the tab's order
+    assert flags({"id": "a", "run": run_cmd, "fields": ["mode"]}) == ["--mode", "fast"]
+    assert flags({"id": "a", "run": run_cmd, "fields": ["mode", "n"]}) == ["--n", "11", "--mode", "fast"]
+    # "*" is how an action opts back in to the whole form
+    assert flags({"id": "a", "run": run_cmd, "fields": ["*"]}) == ["--n", "11", "--mode", "fast"]
+    assert Manifest.parse(mk({"id": "a", "run": run_cmd, "fields": ["mode"]}), "t").to_json()["tabs"][0]["actions"][0]["fields"] == ["mode"]
+    # a field id that does not exist would silently pass nothing
+    for bad in ({"id": "a", "run": run_cmd, "fields": ["nope"]},
+                {"id": "a", "run": run_cmd, "fields": ["*", "mode"]},
+                {"id": "a", "run": run_cmd, "fields": [3]}):
+        with pytest.raises(ManifestError):
+            Manifest.parse(mk(bad), "t")
+
+
+def test_the_nonlinear_revise_action_takes_none_of_the_run_tabs_flags():
+    """The shipped catalog, against the failure that was actually reported."""
+    import dataclasses, json, pathlib
+    from steltic_hub.runners import cli_args
+    from steltic_hub.manifest import Tab
+    cat = pathlib.Path(__file__).resolve().parents[1] / "steltic_hub" / "catalog" / "steltic_nonlinear.json"
+    tabs = [Tab.parse(t) for t in json.loads(cat.read_text(encoding="utf-8"))["tabs"]]
+    run = next(t for t in tabs if t.id == "run")
+    rev = next(a for a in run.actions if a.id == "revise")
+    sent = {"job": "g53ex2", "site_class": "D", "n_records": 11, "target": "mcer",
+            "dt": 0.01, "integrator": "hht", "parallel": 2}
+    assert cli_args(run, sent, {"job": "g53ex2"})[:2] == ["--site-class", "D"]      # the main run still wants them
+    keep = [f for f in run.fields if f.id in rev.fields]
+    assert cli_args(dataclasses.replace(run, run=rev.run, fields=keep), sent, {"job": "g53ex2"}) == []
+    assert rev.run.command[:3] == ["-m", "snl", "revise"]

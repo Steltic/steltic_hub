@@ -449,7 +449,10 @@
               "revise",
               "{job_dir}"
             ]
-          }
+          },
+          "fields": [
+            "job"
+          ]
         }
       ]
     },
@@ -502,7 +505,8 @@
           "type": "number",
           "label": "Standards searches, at most",
           "arg": "--max-searches",
-          "default": 8
+          "placeholder": "no limit",
+          "help": "Leave empty and the review looks up every clause it cites, however many searches that takes. Set a number only to cap the cost of a run."
         }
       ],
       "artifacts": [

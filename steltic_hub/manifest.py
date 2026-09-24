@@ -195,6 +195,14 @@ class Action:
     run: "Run"
     info: str = ""
     label: str = ""
+    # Which of the tab's fields this action's command actually takes. The tab's fields are drawn for
+    # the main run, and a second command is rarely the same program: `snl revise <job>` takes no
+    # options at all, so passing it the Run tab's --site-class/--n-records/--dt made argparse exit 2
+    # before it did anything. So an action declares what it wants and gets nothing else:
+    #   omitted / []      no field flags (the command's own templated arguments only)
+    #   ["*"]             every field on the tab, as the main run gets
+    #   ["job","params"]  exactly those, in the tab's own order
+    fields: list = field(default_factory=list)
 
 
 @dataclass
@@ -252,7 +260,15 @@ class Tab:
             if r.continues:
                 raise ManifestError(f"tab {t.id}: action {a['id']!r} may not declare `continues` -- "
                                     "that names the tab a resume picks up, and an action is not a tab")
-            t.actions.append(Action(id=a["id"], run=r, info=a.get("info", ""),
+            af = list(a.get("fields") or [])
+            if any(not isinstance(x, str) for x in af):
+                raise ManifestError(f"tab {t.id}: action {a['id']!r} fields must be a list of field ids (or [\"*\"])")
+            unknown = [x for x in af if x != "*" and x not in ids]
+            if unknown:
+                raise ManifestError(f"tab {t.id}: action {a['id']!r} names unknown field(s) {', '.join(map(repr, unknown))}")
+            if "*" in af and len(af) > 1:
+                raise ManifestError(f"tab {t.id}: action {a['id']!r} fields is \"*\" or a list of ids, not both")
+            t.actions.append(Action(id=a["id"], run=r, info=a.get("info", ""), fields=af,
                                     label=a.get("label") or r.label or a["id"].capitalize()))
         aids = [a.id for a in t.actions]
         if len(aids) != len(set(aids)):
@@ -410,7 +426,7 @@ class Manifest:
                          "continues": t.run.continues or None,
                          "can_cancel": t.run.kind == "cli" or bool(t.run.cancel)} if t.run else None),
                 "actions": [{"id": a.id, "label": a.label, "info": a.info, "kind": a.run.kind,
-                             "llm": bool(a.run.llm),
+                             "llm": bool(a.run.llm), "fields": list(a.fields),
                              "can_cancel": a.run.kind == "cli" or bool(a.run.cancel)} for a in t.actions],
                 "fields": [{
                     "id": f.id, "type": f.type, "label": f.label, "placeholder": f.placeholder,
