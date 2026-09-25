@@ -569,6 +569,17 @@ async def run(mod_id: str, tab_id: str, request: Request):
             return _sse_error(f"{f.label} is required")
     if (m.credentials and tab.run.kind == "http" and not _CONNECTION) or (tab.run.llm and not _CONNECTION):
         return _sse_error("Set your LLM connection first (the Connection button in the title bar).")
+    # A run may declare files another step must have put in the project first (manifest
+    # `run.requires`). The page greys the button while one is missing; this is the same check for
+    # anything that drives runs without the page -- Admin's batch, a script, a stale tab.
+    for q in (tab.run.requires or []):
+        try:
+            present = jobs.resolve_in_job(job, q["path"]).exists()
+        except (PermissionError, OSError):
+            present = False
+        if not present:
+            return _sse_error((q.get("missing") or "").strip()
+                              or f"{tab.title} needs {q['path']} in the project first.")
 
     run_id = uuid.uuid4().hex[:12]
     RUNS.began(run_id, m.id, tab.id)       # so /api/state can say WHICH module is busy, not just that one is

@@ -327,11 +327,37 @@ function renderForm(body, m, t) {
   const runBtn = el('button', { class: 'primary' }, (t.run && t.run.label) || 'Run');
   const stopBtn = el('button', { class: 'ghost danger', style: 'display:none' }, 'Stop');
   const arts = el('div', { class: 'arts' });
+  // `run.requires` (manifest): files another step must have put in the project first. The main
+  // button stays closed while one is missing and the tab says which step opens it; the other
+  // buttons on the tab are untouched, because one of them is usually that step.
+  const gate = { need: (t.run && t.run.requires) || [], missing: [], checked: false, lastStatus: null };
+  const gateNote = el('div', { class: 'note gate', style: 'display:none' });
+  const checkGate = async () => {
+    if (!gate.need.length) return;
+    if (!S.project) { gate.missing = gate.need.slice(); gate.checked = true; paint(); return; }
+    try {
+      const d = await (await fetch(`/api/jobs/${enc(S.project)}/tree`)).json();
+      const have = new Set((d.entries || []).map(e => e.path.replace(/\\/g, '/')));
+      gate.missing = gate.need.filter(q => !have.has(q.path.replace(/\\/g, '/')));
+    } catch (e) { gate.missing = gate.need.slice(); }
+    gate.checked = true; paint();
+  };
   const paint = () => {
     const r = S.runs[key];
     status.className = 'status ' + ({ running: '', done: 'ok', failed: 'bad', cancelled: 'bad', paused: 'warn' }[r.status] || '');
     status.textContent = r.statusText || '';
-    runBtn.disabled = r.status === 'running' || unmet.length > 0;
+    const closed = gate.need.length > 0 && (!gate.checked || gate.missing.length > 0);
+    runBtn.disabled = r.status === 'running' || unmet.length > 0 || closed;
+    runBtn.title = closed && gate.checked ? gate.missing.map(q => q.missing || ('needs ' + q.path)).join('\n') : '';
+    gateNote.style.display = closed && gate.checked ? '' : 'none';
+    if (closed && gate.checked) {
+      gateNote.innerHTML = '';
+      gateNote.append(el('b', {}, ((t.run && t.run.label) || 'Run') + ' is closed — '),
+        gate.missing.map(q => q.missing || ('the project has no ' + q.path + ' yet')).join(' '));
+    }
+    // a run on this tab just ended: whatever it wrote may have opened the gate
+    if (gate.need.length && gate.lastStatus === 'running' && r.status !== 'running') setTimeout(checkGate, 300);
+    gate.lastStatus = r.status;
     for (const b of extraBtns) b.disabled = r.status === 'running' || unmet.length > 0;
     stopBtn.style.display = (r.status === 'running' && t.run && t.run.can_cancel) ? '' : 'none';
     run.usageEl.style.display = r.usageText ? '' : 'none'; run.usageEl.textContent = r.usageText || '';
@@ -383,9 +409,10 @@ function renderForm(body, m, t) {
     if (!a.info) continue;
     pane.append(el('div', { class: 'note' }, el('b', {}, (a.label || a.id) + ' — '), a.info));
   }
-  pane.append(acts, arts, run.lights, run.logWrap, run.reasonWrap, run.usageEl);
+  pane.append(gateNote, acts, arts, run.lights, run.logWrap, run.reasonWrap, run.usageEl);
   body.append(pane);
   paint();
+  checkGate();
   showArtifacts(arts, m, t);
 }
 

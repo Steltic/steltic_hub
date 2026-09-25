@@ -151,6 +151,13 @@ class Run:
     # tab to press after a stop, a timeout or a pause instead of starting the step over. Only the
     # module knows that such a tab exists and that pressing it with no fields is a plain resume.
     continues: str = ""
+    # Files that must already be in the project before this run may start, each with the sentence
+    # to show while one is missing -- [{"path": "hinge_params_collected.json", "missing": "..."}].
+    # This is how a tab says "do the other button first" without the hub knowing what either does:
+    # the Nonlinear Run tab will not run the analyses until Collect specification values has written
+    # the parameter file, because an analysis on placeholders is what produced the UNVERIFIED reports.
+    # Paths are relative to the project folder; the UI greys the button, /api/run refuses the start.
+    requires: list = field(default_factory=list)
 
     @staticmethod
     def parse(d: dict) -> "Run":
@@ -173,6 +180,16 @@ class Run:
         for s in r.stage or []:
             if not isinstance(s, dict) or not s.get("from") or not s.get("to"):
                 raise ManifestError(f"run.stage entries need from and to: {s!r}")
+        if not isinstance(r.requires, list):
+            raise ManifestError("run.requires must be a list of {path, missing}")
+        for q in r.requires:
+            if not isinstance(q, dict) or not isinstance(q.get("path"), str) or not q["path"].strip():
+                raise ManifestError(f"run.requires entries need a path: {q!r}")
+            pth = q["path"].replace("\\", "/")
+            if pth.startswith("/") or ".." in pth.split("/") or (len(pth) > 1 and pth[1] == ":"):
+                raise ManifestError(f"run.requires path must be inside the project folder: {q['path']!r}")
+            if not isinstance(q.get("missing", ""), str):
+                raise ManifestError(f"run.requires {q['path']!r}: `missing` must be the sentence shown while it is absent")
         r.retry = _parse_retry(r.retry)
         if r.retry and r.kind != "cli":
             # Only run_cli owns the process it would have to spawn again; a retry asked for anywhere
@@ -424,6 +441,7 @@ class Manifest:
                 "blurb": t.blurb, "artifacts": t.artifacts, "links": t.links,
                 "run": ({"kind": t.run.kind, "label": t.run.label, "llm": bool(t.run.llm),
                          "continues": t.run.continues or None,
+                         "requires": [{"path": q["path"], "missing": q.get("missing") or ""} for q in t.run.requires],
                          "can_cancel": t.run.kind == "cli" or bool(t.run.cancel)} if t.run else None),
                 "actions": [{"id": a.id, "label": a.label, "info": a.info, "kind": a.run.kind,
                              "llm": bool(a.run.llm), "fields": list(a.fields),
