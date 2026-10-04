@@ -1137,7 +1137,7 @@ def test_a_cli_run_marked_llm_gets_the_connection_and_the_servers_it_names(monke
     class Sup:
         ports = {}
         def connection(self): return {"base_url": "https://llm.example/v1", "api_key": "sk-secret", "model": "m-1"}
-        async def ensure(self, mid): return "http://127.0.0.1:8419"
+        async def ensure(self, mid, exclude_run=None): return "http://127.0.0.1:8419"
     monkeypatch.setattr(runners.envs, "python_bin", lambda mid: pathlib.Path(sys.executable))
     monkeypatch.setattr(runners.envs, "env_ready", lambda mid: True)
     monkeypatch.setattr(runners, "build_ctx", lambda *a, **k: {"job_dir": str(tmp_path), "job": "J"})

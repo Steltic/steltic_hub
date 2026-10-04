@@ -128,6 +128,15 @@ request is therefore refused unless the browser says it came from a loopback ori
 Edge window, the Tauri shell, a browser tab on the hub's URL, the launcher and module servers are
 all unaffected.
 
+The module servers the hub starts apply the same rules (HR Steel, CFS Steel in its local posture,
+and the bundled Admin, Design variations and Probabilistic servers -- `local_guard.py`): a
+cross-site or DNS-rebound request to `127.0.0.1:<module port>` is refused there too. The hub also
+hands each server it starts a per-launch secret (`STELTIC_HUB_TOKEN`) and sends it back as the
+`X-Steltic-Hub-Token` header on everything it sends that server -- the credential push, runs, Stop and
+its `/m/` proxy (which replaces any such header a page sent). A module server refuses a request with
+a wrong token. A module served on a deliberate non-loopback name can list it in
+`STELTIC_ALLOWED_HOSTS` (comma-separated).
+
 ### Windows 11 Smart App Control
 
 Smart App Control refuses to load executables and DLLs that are neither code-signed nor known in
@@ -276,7 +285,17 @@ way); a module that is not installed leaves the variable unset.
 folder (its contents are copied), a `.zip` (unpacked, a single wrapping folder is flattened) or a
 file. An empty or missing `from` is skipped unless the entry is `required`, in which case the run
 refuses with `missing` as the message. This is how the Nonlinear module picks up the HR Steel
-design of the active project without either module knowing about the other.
+design of the active project without either module knowing about the other. A `from` folder that
+contains its `to` is refused.
+
+A folder or zip staging is not an overlay: it leaves a record (`.hub_staged.json` in `to`) of the
+package it copied, and the next staging of the same entry compares the new package with that one.
+Files the earlier package had and the new one does not are moved aside; when the design changed --
+a file named by the entry's optional `design_files` globs (every file when none are given) differs
+from the package staged last time -- the outputs named by its optional `supersede` globs (the
+analyses of the earlier design) and the earlier design's files are moved aside with them. A project
+copy edited since it was staged is moved aside before a changed package file replaces it. "Moved
+aside" is `to/_superseded/<YYYYmmdd-HHMMSS>/<same path>`, logged in the run; nothing is deleted.
 
 Templates available in commands, bodies, env vars, stage entries and field defaults: `{job}`,
 `{job_dir}`, `{jobs_dir}`, `{module_dir}`, `{data_dir}`, `{catalog_dir}`, `{port}`,
@@ -292,7 +311,9 @@ expanded a second time.
 Field types: `text`, `textarea`, `number`, `select`, `checkbox`, `file`, `files`, `project`,
 `attachments`. A field with `arg` becomes a CLI flag (`arg_style`: `flag`, `positional`,
 `flag-if-true`). `file` values are uploads into the project folder (or a file already there) and
-reach the command as absolute paths. A `select` with `fills` (`{path, key, target}`) fetches
+reach the command as absolute paths. An absolute path is accepted only when it is the field's own
+default (`{out.<id>}`) or lies inside the hub's data folder; a field that is only read, not staged,
+may also name one existing file elsewhere (Admin's standards queue), never a folder. A `select` with `fills` (`{path, key, target}`) fetches
 `path` from the module server when a value is picked and drops `key` of the reply into the
 `target` field — that is how the example-brief pickers work. `attachments` reads `.txt`/`.md`/`.pdf`
 files into `text_target` in the browser and sends images along as `[{name, type, data_url}]`.

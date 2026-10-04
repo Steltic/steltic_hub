@@ -12,7 +12,7 @@ singleton, so in-process orchestration would be wrong even if the hub imported m
 which it never does.
 """
 from __future__ import annotations
-import asyncio, codecs, json, os, re, shlex, shutil, signal, subprocess, sys, time, pathlib, zipfile
+import asyncio, codecs, filecmp, fnmatch, json, os, re, secrets, shlex, shutil, signal, subprocess, sys, time, pathlib, zipfile
 import httpx
 from . import config, envs, exitcodes, jobs, sac
 from .manifest import Manifest, Tab, Run
@@ -97,15 +97,18 @@ def field_values(tab: Tab | None, job: str, fields: dict, ctx: dict) -> dict:
     * empty values fall back to the field's default; defaults may use templates
     * file / files values are names inside the project folder (that is where uploads land) and
       become absolute paths, so a command running elsewhere (cwd = a module workspace) still
-      finds them; a default that already expanded to an absolute path is kept as is
+      finds them; a default that already expanded to an absolute path is kept as is, and any other
+      absolute path must pass _absolute_refusal (HUB-06)
     * attachments stay structured ([{name,type,data_url}]) for http bodies
     """
     out: dict = {}
     fields = fields or {}
+    staged = _staged_field_ids(tab)
     for f in (tab.fields if tab else []):
         raw = fields.get(f.id)
+        default = expand(f.default, ctx) if isinstance(f.default, str) else f.default
         if _empty(raw):
-            val = expand(f.default, ctx) if isinstance(f.default, str) else f.default
+            val = default
             if f.type == "checkbox":
                 val = bool(val) if val not in (None, "") else False
         else:
@@ -119,6 +122,9 @@ def field_values(tab: Tab | None, job: str, fields: dict, ctx: dict) -> dict:
                     continue
                 p = pathlib.Path(n)
                 if p.is_absolute():
+                    why = _absolute_refusal(p, default, f.id in staged)
+                    if why:
+                        raise RunError(f"{f.label}: {n!r} {why}")
                     paths.append(str(p))
                 else:
                     try:
@@ -136,6 +142,48 @@ def field_values(tab: Tab | None, job: str, fields: dict, ctx: dict) -> dict:
     for k, v in fields.items():
         out.setdefault(k, v)
     return out
+
+
+_FIELD_REF = re.compile(r"\{f\.([A-Za-z0-9_.-]+)\}")
+
+
+def _staged_field_ids(tab: Tab | None) -> set:
+    """Fields whose value a stage entry copies from ({f.<id>} in a `from`)."""
+    if not tab or not tab.run:
+        return set()
+    return {fid for st in (tab.run.stage or []) for fid in _FIELD_REF.findall(str(st.get("from", "")))}
+
+
+def _within(p: pathlib.Path, root: pathlib.Path) -> bool:
+    try:
+        p, root = p.resolve(), root.resolve()
+    except OSError:
+        return False
+    return p == root or root in p.parents
+
+
+def _absolute_refusal(p: pathlib.Path, default, staged: bool) -> str | None:
+    """HUB-06: may a file field name this absolute path? File fields are names inside the project
+    folder (that is where uploads land); an absolute path is accepted only when it is the field's own
+    expanded default (another module's output folder, {out.<id>}) or lies inside the hub's data folder
+    (projects, module outputs, the Query file manager's workspace). Outside both, a field whose value
+    is staged -- its whole folder copied into the project -- is refused; any other field may still
+    name one existing FILE (Admin's standards queue converts PDFs from a folder the user picked; the
+    process only reads it), never a folder."""
+    defaults = default if isinstance(default, list) else [default]
+    for d in defaults:
+        if isinstance(d, str) and d.strip():
+            try:
+                if pathlib.Path(d).resolve() == p.resolve():
+                    return None
+            except OSError:
+                pass
+    if _within(p, config.DATA):
+        return None
+    if not staged and p.is_file():
+        return None
+    return (f"is outside the project and the hub's data folder ({config.DATA}) -- upload it to the project, "
+            f"or put it under the data folder")
 
 
 def build_ctx(m: Manifest, job: str, fields: dict, registry, port: int | None = None,
@@ -173,36 +221,225 @@ def cli_args(tab: Tab, fields: dict, ctx: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------- staging inputs
-def _extract_zip(src: pathlib.Path, dst: pathlib.Path, log):
-    def _safe(n: str) -> bool:
-        return bool(n) and not n.startswith("/") and ".." not in n.split("/") and ":" not in n.split("/")[0]
+# Staging a package (a folder or a .zip) into a project used to be a plain overlay: copy every file,
+# delete nothing. Files an earlier package had and the new one does not stayed behind, and so did the
+# analyses run on the earlier design -- a `--only` rerun or Compare then mixed two designs (HUB-04).
+# Now every folder/zip staging leaves a record (STAGE_RECORD, in the destination) of what the package
+# held (a content signature per file) and what was written, and the next staging of the entry uses it:
+#   * a file the earlier package had and this one does not is moved aside;
+#   * the DESIGN changed when a package file named by the entry's `design_files` globs (every package
+#     file when it declares none) differs from the PACKAGE staged last time -- not from the project's
+#     copy, which the module may legitimately extend (the Nonlinear module adds its DDM results to
+#     design/calc_package.json). Then the outputs the entry declares in `supersede` (analyses of the
+#     staged design) and the earlier design's copies are moved aside together, so
+#     _superseded/<time>/ holds the earlier design with its results;
+#   * a package file that changed, whose project copy was edited after it was staged, is moved aside
+#     before it is replaced. A package file that did not change is copied over its project copy as
+#     before.
+# A project staged before the record existed has no history: project files that differ from the new
+# package are moved aside once, and a design that differs is warned about, not superseded (the
+# project's copy may differ only by what the module itself added).
+# Nothing is ever deleted: "moved aside" is <destination>/_superseded/<YYYYmmdd-HHMMSS>/<same path>,
+# and every move is logged in the run.
+STAGE_RECORD = ".hub_staged.json"
+SUPERSEDED_DIR = "_superseded"
+_STAGE_OWN = {STAGE_RECORD, SUPERSEDED_DIR}          # never staged, matched or moved themselves
 
+
+def _zip_safe(n: str) -> bool:
+    return bool(n) and not n.startswith("/") and ".." not in n.split("/") and ":" not in n.split("/")[0]
+
+
+def _zip_entries(src: pathlib.Path) -> dict:
+    """rel path -> ZipInfo for the files a zip would put in the project. Traversal entries never count;
+    a zip that wraps everything in one top folder is flattened, so its files sit in the project root
+    (the layout the viewers and the other modules probe for)."""
     with zipfile.ZipFile(src) as z:
         pairs = [(i, i.filename.replace("\\", "/")) for i in z.infolist() if not i.is_dir()]
-        pairs = [(i, n) for i, n in pairs if _safe(n)]                  # traversal entries never count
-        names = [n for _, n in pairs]
-        tops = {n.split("/", 1)[0] for n in names}
-        # a zip that wraps everything in one top folder is flattened, so its files sit in the
-        # project root (the layout the viewers and the other modules probe for)
-        wrap = len(tops) == 1 and all("/" in n for n in names)
-        base = dst.resolve()
-        n_written = 0
-        for info, name in pairs:
-            rel = name.split("/", 1)[1] if wrap else name
-            if not rel:
+    pairs = [(i, n) for i, n in pairs if _zip_safe(n)]
+    names = [n for _, n in pairs]
+    tops = {n.split("/", 1)[0] for n in names}
+    wrap = len(tops) == 1 and all("/" in n for n in names)
+    out = {}
+    for info, name in pairs:
+        rel = name.split("/", 1)[1] if wrap else name
+        if rel and rel.split("/", 1)[0] not in _STAGE_OWN:
+            out[rel] = info
+    return out
+
+
+def _dir_entries(src: pathlib.Path) -> dict:
+    """rel path (posix) -> source file, for every file under a source folder."""
+    out = {}
+    for p in src.rglob("*"):
+        rel = p.relative_to(src).as_posix()
+        if rel.split("/", 1)[0] in _STAGE_OWN or p.is_dir():
+            continue
+        out[rel] = p
+    return out
+
+
+def _sig(p: pathlib.Path):
+    """What a project file looked like: size and whole-second mtime (coarse enough for every file system)."""
+    try:
+        st = p.stat()
+        return [st.st_size, int(st.st_mtime)]
+    except OSError:
+        return None
+
+
+def _file_hash(p: pathlib.Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _read_record(rd: pathlib.Path) -> dict:
+    try:
+        d = json.loads((rd / STAGE_RECORD).read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_record(rd: pathlib.Path, rec: dict) -> None:
+    tmp = rd / (STAGE_RECORD + ".tmp")
+    try:
+        tmp.write_text(json.dumps(rec, indent=1), encoding="utf-8")
+        os.replace(tmp, rd / STAGE_RECORD)
+    except OSError:
+        pass
+
+
+def _matches(rel: str, globs) -> bool:
+    return any(fnmatch.fnmatchcase(rel, g) or fnmatch.fnmatchcase(rel.split("/", 1)[0], g) for g in globs)
+
+
+class _Aside:
+    """Moves files out of the way into <rd>/_superseded/<time>/, creating that folder on first use."""
+
+    def __init__(self, rd: pathlib.Path):
+        self.rd, self.dir, self.moved = rd, None, []
+
+    def move(self, rel: str) -> None:
+        src = self.rd / rel
+        if not (src.exists() or src.is_symlink()):
+            return
+        if self.dir is None:
+            base = self.rd / SUPERSEDED_DIR / time.strftime("%Y%m%d-%H%M%S")
+            d, n = base, 1
+            while d.exists():
+                n += 1
+                d = base.with_name(f"{base.name}-{n}")
+            self.dir = d
+        target = self.dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(target))
+        self.moved.append(rel)
+
+
+def _stage_tree(s: dict, label: str, source: str, entries: dict, rd: pathlib.Path, srcsig, same, write, log) -> int:
+    """Put `entries` (rel -> source handle) into rd, keeping the record and moving aside what the new
+    package supersedes (see the block comment above). `srcsig(rel)` is a content signature of the new
+    package's file, `same(rel)` says whether rd/rel already holds exactly that file and `write(rel)`
+    writes it. Returns the number of files written."""
+    record = _read_record(rd)
+    prev = record.get(label) if isinstance(record.get(label), dict) else None
+    prev_files = (prev or {}).get("files") or {}
+    design_globs = s.get("design_files") or ["*"]
+    aside = _Aside(rd)
+    sigs = {rel: srcsig(rel) for rel in entries}
+
+    def was(rel):
+        e = prev_files.get(rel)
+        return e if isinstance(e, dict) else {}
+
+    changed = {rel for rel in entries if prev is not None and was(rel).get("src") != sigs[rel]}
+    stale = sorted(rel for rel in prev_files if rel not in entries and (rd / rel).is_file()) if prev else []
+    note = None
+    if prev is not None:
+        design_changed = (any(_matches(rel, design_globs) for rel in changed)
+                          or any(_matches(rel, design_globs) for rel in prev_files if rel not in entries))
+        moves = list(stale)
+        for rel in sorted(changed):
+            t = rd / rel
+            if not t.is_file():
                 continue
-            target = (base / rel).resolve()
-            if base != target and base not in target.parents:
-                continue                                                  # zip-slip guard
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with z.open(info) as f, open(target, "wb") as g:
-                shutil.copyfileobj(f, g)
-            n_written += 1
-    log(f"[hub] unpacked {src.name}: {n_written} files into {dst}")
+            edited = was(rel).get("dst") is not None and _sig(t) != was(rel).get("dst")
+            if design_changed or edited:
+                moves.append(rel)          # the earlier design's copy (kept beside its analyses), or an edit
+        if design_changed:
+            # a package file that did not change, but whose project copy the module extended for the
+            # earlier design (DDM results in design/calc_package.json), goes with that design's results
+            moves += [rel for rel in sorted(entries) if rel not in changed and (rd / rel).is_file() and not same(rel)]
+    else:
+        # No record: a project staged by an older hub, or a first staging. Whatever differs from the new
+        # package is kept aside once; outputs are left where they are (their design is unknown).
+        design_changed = False
+        moves = [rel for rel in sorted(entries) if (rd / rel).is_file() and not same(rel)]
+        differ = [rel for rel in moves if _matches(rel, design_globs)]
+        if differ and s.get("supersede"):
+            present = [g for g in s["supersede"] if any(rd.glob(g))]
+            if present:
+                note = (f"[hub] warning: {label}: this project has no record of an earlier staging and "
+                        f"{len(differ)} design file(s) differ from the new package ({', '.join(differ[:5])}"
+                        f"{', ...' if len(differ) > 5 else ''}) -- if the design changed, results already here "
+                        f"({', '.join(present[:6])}) describe the earlier one: re-run them")
+    for rel in moves:
+        aside.move(rel)
+
+    superseded = []
+    if design_changed and s.get("supersede"):
+        for g in s["supersede"]:
+            for p in sorted(rd.glob(g)):
+                rel = p.relative_to(rd).as_posix()
+                if rel.split("/", 1)[0] in _STAGE_OWN or rel in entries or not p.exists():
+                    continue
+                if p.is_dir() and any(e.startswith(rel + "/") for e in entries):
+                    continue                   # a folder the package itself fills (design/, figs/)
+                aside.move(rel)
+                superseded.append(rel)
+
+    n = 0
+    files = {}
+    for rel in entries:
+        t = rd / rel
+        tr = t.resolve()
+        if rd != tr and rd not in tr.parents:
+            continue                                                      # zip-slip / symlink escape guard
+        t.parent.mkdir(parents=True, exist_ok=True)
+        write(rel)
+        files[rel] = {"src": sigs[rel], "dst": _sig(t)}
+        n += 1
+    record[label] = {"source": source, "staged_at": time.time(), "files": files}
+    _write_record(rd, record)
+
+    if aside.dir is not None:
+        where = aside.dir.relative_to(rd).as_posix()
+        n_stale = len(stale)
+        n_rest = len(aside.moved) - n_stale - len(superseded)
+        parts = []
+        if n_stale:
+            parts.append(f"{n_stale} file(s) the new package no longer has")
+        if n_rest:
+            parts.append(f"{n_rest} file(s) of the earlier design" if design_changed else
+                         f"{n_rest} project file(s) the new package replaces")
+        if superseded:
+            parts.append(f"results of the earlier design ({', '.join(superseded[:8])}{', ...' if len(superseded) > 8 else ''})")
+        log(f"[hub] {label}: {'the design changed -- ' if design_changed else ''}moved {'; '.join(parts)} "
+            f"aside to {where}/ (nothing deleted)")
+        if superseded:
+            log(f"[hub] {label}: re-run the analyses for the new design; the earlier ones are kept in {where}/")
+    if note:
+        log(note)
+    return n
 
 
 def stage_inputs(run: Run, ctx: dict, log) -> None:
-    """Copy or unpack declared inputs into place before a run (see Run.stage)."""
+    """Copy or unpack declared inputs into place before a run (see Run.stage and the block above)."""
     for s in run.stage or []:
         src = expand(s.get("from", ""), ctx).strip()
         dst = expand(s.get("to", ""), ctx).strip()
@@ -217,7 +454,6 @@ def stage_inputs(run: Run, ctx: dict, log) -> None:
                 raise RunError(s.get("missing") or f"{label} not found: {src}")
             log(f"[hub] {label}: {src} not present -- skipped")
             continue
-        dstp.mkdir(parents=True, exist_ok=True)
         try:
             rs, rd = srcp.resolve(), dstp.resolve()
         except OSError:
@@ -226,19 +462,58 @@ def stage_inputs(run: Run, ctx: dict, log) -> None:
             if rs == rd or rd in rs.parents:
                 log(f"[hub] {label}: {src} is already the project folder")
                 continue
-            n = 0
-            for p in rs.rglob("*"):
-                if p.is_dir():
-                    continue
-                rel = p.relative_to(rs)
+            if rs in rd.parents:
+                # HUB-06: copying a folder into a folder inside itself never ends (rglob keeps finding
+                # the copies it just made)
+                raise RunError(f"{label}: {dst} is inside {src} -- refusing to copy a folder into itself")
+            dstp.mkdir(parents=True, exist_ok=True)
+            rd = dstp.resolve()
+            files = _dir_entries(rs)
+
+            def same(rel, files=files, rd=rd):
                 t = rd / rel
-                t.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(p, t)
-                n += 1
+                try:
+                    a, b = t.stat(), files[rel].stat()
+                    if a.st_size != b.st_size:
+                        return False
+                    if a.st_mtime_ns == b.st_mtime_ns:
+                        return True           # copy2 keeps the exact mtime: this is the copy we made
+                    return filecmp.cmp(files[rel], t, shallow=False)
+                except OSError:
+                    return False
+
+            def write(rel, files=files, rd=rd):
+                shutil.copy2(files[rel], rd / rel)
+            n = _stage_tree(s, label, str(rs), files, rd, lambda rel: _file_hash(files[rel]), same, write, log)
             log(f"[hub] {label}: copied {n} files from {src}")
         elif zipfile.is_zipfile(srcp):
-            _extract_zip(srcp, dstp, log)
+            dstp.mkdir(parents=True, exist_ok=True)
+            rd = dstp.resolve()
+            entries = _zip_entries(rs)
+            with zipfile.ZipFile(rs) as z:
+                def same(rel, z=z, rd=rd):
+                    t, info = rd / rel, entries[rel]
+                    try:
+                        if t.stat().st_size != info.file_size:
+                            return False
+                        with z.open(info) as f, open(t, "rb") as g:
+                            while True:
+                                a, b = f.read(1 << 20), g.read(1 << 20)
+                                if a != b:
+                                    return False
+                                if not a:
+                                    return True
+                    except OSError:
+                        return False
+
+                def write(rel, z=z, rd=rd):
+                    with z.open(entries[rel]) as f, open(rd / rel, "wb") as g:
+                        shutil.copyfileobj(f, g)
+                n = _stage_tree(s, label, str(rs), entries, rd,
+                                lambda rel: f"{entries[rel].file_size}:{entries[rel].CRC:08x}", same, write, log)
+            log(f"[hub] unpacked {srcp.name}: {n} files into {dst}")
         else:
+            dstp.mkdir(parents=True, exist_ok=True)
             if rs.parent == rd:
                 continue                                                  # already inside the project
             shutil.copy2(rs, rd / rs.name)
@@ -246,10 +521,14 @@ def stage_inputs(run: Run, ctx: dict, log) -> None:
 
 
 # ---------------------------------------------------------------- server supervision
+# The header a module server checks against STELTIC_HUB_TOKEN (see ServerSupervisor.token).
+TOKEN_HEADER = "X-Steltic-Hub-Token"
+
+
 class ServerSupervisor:
     """Starts a module's own web app on demand and keeps it alive for embed tabs and http runs."""
 
-    def __init__(self, registry, connection=None):
+    def __init__(self, registry, connection=None, runs: "JobRuns | None" = None):
         self.registry = registry
         self.procs: dict[str, subprocess.Popen] = {}
         self.ports: dict[str, int] = {}
@@ -259,6 +538,19 @@ class ServerSupervisor:
         # callable -> the one in-memory LLM connection, or None. Held by the hub, pushed to each
         # module server after it comes up, so a key is typed once and never touches disk.
         self.connection = connection or (lambda: None)
+        # The live runs (JobRuns), so a restart for a newly available dependency can wait until the
+        # module -- and every module that drives it -- is idle (see _busy_runs).
+        self.runs = runs
+        # A per-launch secret handed to every module server it starts (env STELTIC_HUB_TOKEN) and sent
+        # back as the X-Steltic-Hub-Token header on everything the hub itself sends a module server:
+        # the credential push, http runs, Stop, the /m/ proxy. A module server refuses a request whose
+        # token is wrong and, with the right one, knows it came from the hub (HUB-01). Never sent to
+        # the browser.
+        self.token = secrets.token_urlsafe(32)
+        self._deferred: dict[str, tuple] = {}    # mod_id -> dependencies whose restart is waiting
+
+    def auth_headers(self) -> dict:
+        return {TOKEN_HEADER: self.token}
 
     def _lock(self, mod_id: str) -> asyncio.Lock:
         lk = self._locks.get(mod_id)
@@ -337,7 +629,7 @@ class ServerSupervisor:
             return []
         return [r for r in (m.server.get("requires") or []) if r != mod_id]
 
-    async def _ensure_required(self, mod_id: str, seen: frozenset) -> dict:
+    async def _ensure_required(self, mod_id: str, seen: frozenset, exclude_run: str | None = None) -> dict:
         """Start the servers this one depends on (those that are installed) and return their URLs.
         A dependency that is not installed maps to None: the module then starts without it."""
         out: dict = {}
@@ -346,30 +638,94 @@ class ServerSupervisor:
                 continue
             try:
                 if self.registry.is_installed(req) and self.registry.manifest(req).has_server:
-                    out[req] = await self._ensure(req, seen | {mod_id})
+                    out[req] = await self._ensure(req, seen | {mod_id}, exclude_run)
                 else:
                     out[req] = None
             except RunError:
                 out[req] = None
         return out
 
-    async def ensure(self, mod_id: str) -> str:
-        """Idempotent start + health wait. Returns the module's base URL."""
-        return await self._ensure(mod_id, frozenset())
+    async def ensure(self, mod_id: str, exclude_run: str | None = None) -> str:
+        """Idempotent start + health wait. Returns the module's base URL.
 
-    async def _ensure(self, mod_id: str, seen: frozenset) -> str:
+        `exclude_run` is the run asking (if any): it is not yet using the server, so it never makes
+        the module count as busy for a deferred restart (see _busy_runs)."""
+        return await self._ensure(mod_id, frozenset(), exclude_run)
+
+    def _drivers(self, mod_id: str) -> set[str]:
+        """Modules whose own SERVER talks to mod_id's server (`server.requires`), transitively."""
+        out, todo = set(), [mod_id]
+        try:
+            known = list(self.registry.known())
+        except Exception:
+            return out
+        while todo:
+            target = todo.pop()
+            for other in known:
+                if other.id == mod_id or other.id in out or not other.has_server:
+                    continue
+                if target in (other.server.get("requires") or []):
+                    out.add(other.id)
+                    todo.append(other.id)
+        return out
+
+    def _run_uses(self, where: str, mod_id: str, drivers: set[str]) -> bool:
+        """Does the live run "<module>.<tab>" use mod_id's server? Yes for mod_id's own runs; for a
+        run whose command/env names {server.<mod_id>}; and for an http run of a module whose server
+        drives mod_id's (Design variations or the Nonlinear loop starting HR Steel designs). A tab's
+        extra buttons (actions) count too, since the run key does not say which button was pressed."""
+        owner, _, tab_id = where.partition(".")
+        if owner == mod_id:
+            return True
+        try:
+            m = self.registry.manifest(owner)
+        except Exception:
+            return owner in drivers               # unknown now: assume the worst
+        tab = next((t for t in m.tabs if t.id == tab_id), None)
+        if tab is None:
+            return owner in drivers
+        runs = [r for r in [tab.run, *[a.run for a in (tab.actions or [])]] if r]
+        for r in runs:
+            if mod_id in _SERVER_REF.findall(json.dumps([r.env, r.command, r.cwd])):
+                return True
+            if owner in drivers and r.kind == "http":
+                return True
+        return False
+
+    def _busy_runs(self, mod_id: str, exclude_run: str | None = None) -> list[str]:
+        """The live runs ("<module>.<tab>") using mod_id's server right now. Only runs the hub started
+        are known: a design started from a module's own embedded page is not visible here."""
+        if self.runs is None:
+            return []
+        drivers = self._drivers(mod_id)
+        return sorted(where for rid, where in list(self.runs.where.items())
+                      if rid != exclude_run and self._run_uses(where, mod_id, drivers))
+
+    async def _ensure(self, mod_id: str, seen: frozenset, exclude_run: str | None = None) -> str:
         m = self.registry.manifest(mod_id)
         if not m.has_server:
             raise RunError(f"module {mod_id!r} has no server")
-        deps = await self._ensure_required(mod_id, seen)
+        deps = await self._ensure_required(mod_id, seen, exclude_run)
         async with self._lock(mod_id):
             if self.is_up(mod_id):
                 # A dependency that was missing when this server started (so it runs without it)
-                # and is available now: restart so the new run gets it.
+                # and is available now: restart so the new run gets it -- but never under a run that
+                # is using this server (HUB-05: that killed a design mid-run). While one is live the
+                # restart is deferred: self.deps keeps the old map, so the first ensure() after the
+                # module goes idle (the next run, or the next proxied request) restarts it.
                 was = self.deps.get(mod_id, {})
                 newly = [r for r, url in deps.items() if url and was.get(r) != url]
                 if not newly:
                     return self.base_url(mod_id)
+                busy = self._busy_runs(mod_id, exclude_run)
+                if busy:
+                    if self._deferred.get(mod_id) != tuple(newly):
+                        self._deferred[mod_id] = tuple(newly)
+                        self._log_line(mod_id, f"[hub] {', '.join(newly)} available now -- restart of "
+                                               f"{self.registry.name(mod_id)} deferred while {', '.join(busy)} "
+                                               f"is running")
+                    return self.base_url(mod_id)
+                self._deferred.pop(mod_id, None)
                 self._log_line(mod_id, f"[hub] {', '.join(newly)} available now -- restarting {self.registry.name(mod_id)} to use it")
                 self.stop(mod_id)
             if not envs.env_ready(mod_id):
@@ -387,6 +743,7 @@ class ServerSupervisor:
             env.pop("PYTHONPATH", None)
             env.pop("PYTHONHOME", None)
             env["PYTHONUNBUFFERED"] = "1"
+            env["STELTIC_HUB_TOKEN"] = self.token        # checked against X-Steltic-Hub-Token (HUB-01)
             skipped = []
             for k, v in list(expand(m.env_vars, ctx).items()) + list(expand(m.server.get("env", {}), ctx).items()):
                 v = str(v)
@@ -431,7 +788,8 @@ class ServerSupervisor:
         url = self.base_url(mod_id) + m.credentials.get("path", "/api/creds")
         try:
             async with httpx.AsyncClient(timeout=20.0) as cx:
-                r = await cx.request(m.credentials.get("method", "POST"), url, json=conn)
+                r = await cx.request(m.credentials.get("method", "POST"), url, json=conn,
+                                     headers=self.auth_headers())
                 return r.status_code < 400
         except Exception:
             return False
@@ -440,7 +798,7 @@ class ServerSupervisor:
         health = m.server.get("health", "/healthz")
         url = self.base_url(mod_id) + health
         deadline = time.time() + config.HEALTH_TIMEOUT
-        async with httpx.AsyncClient(timeout=5.0) as cx:
+        async with httpx.AsyncClient(timeout=5.0, headers=self.auth_headers()) as cx:
             while time.time() < deadline:
                 pr = self.procs.get(mod_id)
                 if pr and pr.poll() is not None:
@@ -584,7 +942,7 @@ class JobRuns:
             spec, url = h["spec"], h["base_url"]
             if spec:
                 try:
-                    async with httpx.AsyncClient(timeout=10.0) as cx:
+                    async with httpx.AsyncClient(timeout=10.0, headers=h.get("headers") or {}) as cx:
                         await cx.request(spec.get("method", "POST"), url + spec.get("path", ""),
                                          json=spec.get("body") or {})
                 except Exception:
@@ -750,7 +1108,7 @@ async def run_cli(m: Manifest, tab: Tab, job: str, fields: dict, registry, runs:
     for mid in servers_referenced(m, tab) if supervisor is not None else []:
         try:
             if registry.is_installed(mid) and registry.manifest(mid).has_server:
-                server_urls[f"server.{mid}"] = await supervisor.ensure(mid)
+                server_urls[f"server.{mid}"] = await supervisor.ensure(mid, exclude_run=run_id)
         except (RunError, Exception) as e:
             yield sse({"type": "error", "text": f"{registry.name(mid)} did not start: {e}"})
             yield sse({"type": "done", "ok": False, "rc": -1})
@@ -928,7 +1286,7 @@ async def run_http(m: Manifest, tab: Tab, job: str, fields: dict, registry,
     own browser UI are dropped, and the run's outcome can be recorded in the project history.
     """
     try:
-        base_url = await supervisor.ensure(m.id)
+        base_url = await supervisor.ensure(m.id, exclude_run=run_id)
     except RunError as e:
         yield sse({"type": "error", "text": str(e)})
         yield sse({"type": "done", "ok": False})
@@ -948,14 +1306,15 @@ async def run_http(m: Manifest, tab: Tab, job: str, fields: dict, registry,
         body.setdefault(k, v)
     url = base_url + expand(tab.run.path, ctx)
     cancel_spec = expand(tab.run.cancel, ctx) if tab.run.cancel else None
-    handle = {"spec": cancel_spec, "base_url": base_url, "task": asyncio.current_task(), "resp": None}
+    handle = {"spec": cancel_spec, "base_url": base_url, "task": asyncio.current_task(), "resp": None,
+              "headers": supervisor.auth_headers()}
     runs.http[run_id] = handle
     yield sse({"type": "start", "run_id": run_id, "module": m.id, "tab": tab.id, "cmd": f"{tab.run.method} {url}"})
     jobs.stamp(job, {"event": "start", "module": m.id, "tab": tab.id, "run_id": run_id})
     outcome = {"ok": None, "seen": False}
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=20.0)) as cx:
-            async with cx.stream(tab.run.method, url, json=body) as resp:
+            async with cx.stream(tab.run.method, url, json=body, headers=supervisor.auth_headers()) as resp:
                 handle["resp"] = resp            # so Stop can drop the stream (JobRuns._drop_stream)
                 if resp.status_code >= 400:
                     txt = (await resp.aread()).decode("utf-8", "replace")[:2000]

@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config, envs, jobs, sac
 from .manifest import ManifestError
 from .registry import Registry, RegistryError
-from .runners import ServerSupervisor, JobRuns, run_cli, run_http, sse, RunError, build_ctx, expand
+from .runners import ServerSupervisor, JobRuns, run_cli, run_http, sse, RunError, build_ctx, expand, TOKEN_HEADER, SUPERSEDED_DIR
 
 REG = Registry()
 
@@ -56,7 +56,8 @@ def _store_connection(conn: dict | None):
 
 
 _CONNECTION = _load_connection()
-SUP = ServerSupervisor(REG, connection=lambda: _CONNECTION)
+RUNS = JobRuns()
+SUP = ServerSupervisor(REG, connection=lambda: _CONNECTION, runs=RUNS)
 
 # ---------------------------------------------------------------- this process
 # The hub is single-instance: a second launch raises a window on the running one. When the code on
@@ -120,7 +121,6 @@ def _spawn_replacement() -> int:
         kw["start_new_session"] = True
         kw["stdin"] = kw["stdout"] = kw["stderr"] = subprocess.DEVNULL
     return subprocess.Popen(argv, **kw).pid
-RUNS = JobRuns()
 
 
 @asynccontextmanager
@@ -679,7 +679,8 @@ async def out_listing(mod_id: str, job: str):
 
     def scan():
         entries = []
-        for p in sorted(root.rglob("*")):
+        # superseded designs and their results (runners.SUPERSEDED_DIR) come after the current ones
+        for p in sorted(root.rglob("*"), key=lambda q: (q.relative_to(root).parts[:1] == (SUPERSEDED_DIR,), q)):
             rel = p.relative_to(root).as_posix()
             if p.is_dir() or rel.startswith(".git/") or "/.git/" in rel:
                 continue
@@ -736,7 +737,11 @@ async def proxy(mod_id: str, path: str, request: Request):
         return JSONResponse({"error": str(e)}, status_code=503)
     url = f"{base}/{path}"
     headers = {k: v for k, v in request.headers.items()
-               if k.lower() not in ("host", "content-length", "accept-encoding", "connection")}
+               if k.lower() not in ("host", "content-length", "accept-encoding", "connection",
+                                    TOKEN_HEADER.lower())}
+    # The browser's own Origin / Sec-Fetch-Site go along (the hub's guard has already passed them);
+    # the per-launch token tells the module server this request came through the hub (HUB-01).
+    headers.update(SUP.auth_headers())
     body = await request.body()
     cx = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=20.0))
     req = cx.build_request(request.method, url, headers=headers, content=body,

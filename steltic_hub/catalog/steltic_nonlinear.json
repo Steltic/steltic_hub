@@ -76,7 +76,38 @@
             "to": "{job_dir}",
             "required": true,
             "label": "design package",
-            "missing": "No design package for this project: run HR Steel on it first (its design is picked up automatically), or choose the .zip that HR Steel produced."
+            "missing": "No design package for this project: run HR Steel on it first (its design is picked up automatically), or choose the .zip that HR Steel produced.",
+            "design_files": [
+              "cfg.py",
+              "model_*.py",
+              "design/*"
+            ],
+            "supersede": [
+              "pushover",
+              "nlrha",
+              "candidate",
+              "ddm_results.json",
+              "ddm_report.html",
+              "ddm_viewer_3d.html",
+              "four_analyses.html",
+              "steltic_viewer_bundle.html",
+              "snl_summary.json",
+              "snl_run.json",
+              "model_gmnia.py",
+              "hinge_params*.json",
+              "collect_evidence.json",
+              "collect_transcript.jsonl",
+              "_collect_model",
+              "review.html",
+              "review.md",
+              "review_transcript.json",
+              "revise_evidence.json",
+              "site_hazard.json",
+              "site_hazard.html",
+              "gm_scaling.json",
+              "ch16_params.json",
+              "design_criteria_16_1_4.*"
+            ]
           }
         ],
         "command": [
@@ -460,7 +491,38 @@
                 "to": "{job_dir}",
                 "required": true,
                 "label": "design package",
-                "missing": "No design package for this project: run HR Steel on it first (its design is picked up automatically), or choose the .zip that HR Steel produced."
+                "missing": "No design package for this project: run HR Steel on it first (its design is picked up automatically), or choose the .zip that HR Steel produced.",
+                "design_files": [
+                  "cfg.py",
+                  "model_*.py",
+                  "design/*"
+                ],
+                "supersede": [
+                  "pushover",
+                  "nlrha",
+                  "candidate",
+                  "ddm_results.json",
+                  "ddm_report.html",
+                  "ddm_viewer_3d.html",
+                  "four_analyses.html",
+                  "steltic_viewer_bundle.html",
+                  "snl_summary.json",
+                  "snl_run.json",
+                  "model_gmnia.py",
+                  "hinge_params*.json",
+                  "collect_evidence.json",
+                  "collect_transcript.jsonl",
+                  "_collect_model",
+                  "review.html",
+                  "review.md",
+                  "review_transcript.json",
+                  "revise_evidence.json",
+                  "site_hazard.json",
+                  "site_hazard.html",
+                  "gm_scaling.json",
+                  "ch16_params.json",
+                  "design_criteria_16_1_4.*"
+                ]
               }
             ],
             "command": [
@@ -572,7 +634,38 @@
             "to": "{job_dir}",
             "required": true,
             "label": "design package",
-            "missing": "No HR Steel design for this project yet: run HR Steel on it first (its design is picked up automatically), or choose the .zip HR Steel produced. The site hazard needs the building's periods, which come from the design."
+            "missing": "No HR Steel design for this project yet: run HR Steel on it first (its design is picked up automatically), or choose the .zip HR Steel produced. The site hazard needs the building's periods, which come from the design.",
+            "design_files": [
+              "cfg.py",
+              "model_*.py",
+              "design/*"
+            ],
+            "supersede": [
+              "pushover",
+              "nlrha",
+              "candidate",
+              "ddm_results.json",
+              "ddm_report.html",
+              "ddm_viewer_3d.html",
+              "four_analyses.html",
+              "steltic_viewer_bundle.html",
+              "snl_summary.json",
+              "snl_run.json",
+              "model_gmnia.py",
+              "hinge_params*.json",
+              "collect_evidence.json",
+              "collect_transcript.jsonl",
+              "_collect_model",
+              "review.html",
+              "review.md",
+              "review_transcript.json",
+              "revise_evidence.json",
+              "site_hazard.json",
+              "site_hazard.html",
+              "gm_scaling.json",
+              "ch16_params.json",
+              "design_criteria_16_1_4.*"
+            ]
           }
         ]
       },
@@ -748,7 +841,38 @@
             "to": "{job_dir}",
             "required": true,
             "label": "design package",
-            "missing": "No HR Steel design for this project yet: run HR Steel on it first (its design is picked up automatically), or choose the .zip HR Steel produced."
+            "missing": "No HR Steel design for this project yet: run HR Steel on it first (its design is picked up automatically), or choose the .zip HR Steel produced.",
+            "design_files": [
+              "cfg.py",
+              "model_*.py",
+              "design/*"
+            ],
+            "supersede": [
+              "pushover",
+              "nlrha",
+              "candidate",
+              "ddm_results.json",
+              "ddm_report.html",
+              "ddm_viewer_3d.html",
+              "four_analyses.html",
+              "steltic_viewer_bundle.html",
+              "snl_summary.json",
+              "snl_run.json",
+              "model_gmnia.py",
+              "hinge_params*.json",
+              "collect_evidence.json",
+              "collect_transcript.jsonl",
+              "_collect_model",
+              "review.html",
+              "review.md",
+              "review_transcript.json",
+              "revise_evidence.json",
+              "site_hazard.json",
+              "site_hazard.html",
+              "gm_scaling.json",
+              "ch16_params.json",
+              "design_criteria_16_1_4.*"
+            ]
           }
         ]
       },
@@ -851,7 +975,38 @@
             "to": "{job_dir}",
             "required": true,
             "label": "design package",
-            "missing": "No design package for this project: run HR Steel on it first, or choose the .zip HR Steel produced."
+            "missing": "No design package for this project: run HR Steel on it first, or choose the .zip HR Steel produced.",
+            "design_files": [
+              "cfg.py",
+              "model_*.py",
+              "design/*"
+            ],
+            "supersede": [
+              "pushover",
+              "nlrha",
+              "candidate",
+              "ddm_results.json",
+              "ddm_report.html",
+              "ddm_viewer_3d.html",
+              "four_analyses.html",
+              "steltic_viewer_bundle.html",
+              "snl_summary.json",
+              "snl_run.json",
+              "model_gmnia.py",
+              "hinge_params*.json",
+              "collect_evidence.json",
+              "collect_transcript.jsonl",
+              "_collect_model",
+              "review.html",
+              "review.md",
+              "review_transcript.json",
+              "revise_evidence.json",
+              "site_hazard.json",
+              "site_hazard.html",
+              "gm_scaling.json",
+              "ch16_params.json",
+              "design_criteria_16_1_4.*"
+            ]
           }
         ],
         "command": [
@@ -945,7 +1100,38 @@
             "to": "{job_dir}",
             "required": true,
             "label": "design package",
-            "missing": "No HR Steel design for this project yet: run HR Steel on it first (its design is picked up automatically), or choose the .zip HR Steel produced."
+            "missing": "No HR Steel design for this project yet: run HR Steel on it first (its design is picked up automatically), or choose the .zip HR Steel produced.",
+            "design_files": [
+              "cfg.py",
+              "model_*.py",
+              "design/*"
+            ],
+            "supersede": [
+              "pushover",
+              "nlrha",
+              "candidate",
+              "ddm_results.json",
+              "ddm_report.html",
+              "ddm_viewer_3d.html",
+              "four_analyses.html",
+              "steltic_viewer_bundle.html",
+              "snl_summary.json",
+              "snl_run.json",
+              "model_gmnia.py",
+              "hinge_params*.json",
+              "collect_evidence.json",
+              "collect_transcript.jsonl",
+              "_collect_model",
+              "review.html",
+              "review.md",
+              "review_transcript.json",
+              "revise_evidence.json",
+              "site_hazard.json",
+              "site_hazard.html",
+              "gm_scaling.json",
+              "ch16_params.json",
+              "design_criteria_16_1_4.*"
+            ]
           }
         ]
       },

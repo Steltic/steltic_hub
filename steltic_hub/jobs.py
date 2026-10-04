@@ -101,7 +101,9 @@ def tree(name: str, max_entries: int = 4000) -> list[dict]:
     if not base.exists():
         return []
     out = []
-    for p in sorted(base.rglob("*")):
+    # what a newer design package moved aside (runners.SUPERSEDED_DIR) is listed after everything
+    # current, so a long history never pushes the project's own files past max_entries
+    for p in sorted(base.rglob("*"), key=lambda q: (q.relative_to(base).parts[:1] == ("_superseded",), q)):
         if len(out) >= max_entries:
             break
         rel = p.relative_to(base).as_posix()

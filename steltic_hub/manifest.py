@@ -126,7 +126,10 @@ class Run:
     cancel: dict = field(default_factory=dict)
     # Copy or unpack inputs into place before running: [{"from": "...", "to": "..."}]. `from`
     # may be a folder (its contents are copied), a .zip (extracted, a single wrapping folder is
-    # flattened) or a file. A `from` that is empty, missing, or already inside `to` is skipped.
+    # flattened) or a file. A `from` that is empty, missing, or already inside `to` is skipped;
+    # one that contains `to` is refused. A folder/zip staging keeps a record in `to` and moves aside
+    # (never deletes) what a newer package supersedes -- optional `design_files` / `supersede` globs
+    # say which files define the design and which outputs were computed from it.
     # This is how a project folder gathers another module's output without either module
     # knowing about the other.
     stage: list = field(default_factory=list)
@@ -180,6 +183,20 @@ class Run:
         for s in r.stage or []:
             if not isinstance(s, dict) or not s.get("from") or not s.get("to"):
                 raise ManifestError(f"run.stage entries need from and to: {s!r}")
+            # `design_files`: globs (relative to `to`) naming the package files that define the design;
+            # `supersede`: globs naming the outputs computed FROM that design, moved aside to
+            # _superseded/<time>/ when the design changes (see runners.stage_inputs).
+            for key in ("design_files", "supersede"):
+                globs = s.get(key)
+                if globs is None:
+                    continue
+                if not isinstance(globs, list) or not all(isinstance(g, str) and g.strip() for g in globs):
+                    raise ManifestError(f"run.stage {key} must be a list of globs: {globs!r}")
+                for g in globs:
+                    gg = g.replace("\\", "/")
+                    if gg.startswith("/") or ".." in gg.split("/") or (len(gg) > 1 and gg[1] == ":") \
+                            or (key == "supersede" and gg.strip("*/") == ""):
+                        raise ManifestError(f"run.stage {key}: {g!r} must name paths inside the destination, not all of it")
         if not isinstance(r.requires, list):
             raise ManifestError("run.requires must be a list of {path, missing}")
         for q in r.requires:
