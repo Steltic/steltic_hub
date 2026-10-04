@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from . import stats as S, variables as V
+from . import local_guard
 
 HERE = pathlib.Path(__file__).resolve().parent
 UI = HERE / "ui"
@@ -35,6 +36,7 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 DEFAULT_OPTIONS = {"nseg": 6}          # beam sub-elements in the static model (HR Steel's default)
 
 app = FastAPI(title="Probabilistic analysis")
+local_guard.install(app)          # refuse cross-site / DNS-rebound requests (HUB-01)
 app.mount("/static", StaticFiles(directory=str(UI)), name="static")
 
 

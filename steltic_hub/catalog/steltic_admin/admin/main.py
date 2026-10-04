@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, grammar, help as helpdesk, llm, plans, standards
+from . import local_guard
 from .hub import HubClient, HubError
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -36,6 +37,7 @@ executor = plans.Executor(hub, store, HUB_JOBS)
 github = helpdesk.GitHub(ADMIN_DATA / "github")
 
 app = FastAPI(title="Steltic Admin")
+local_guard.install(app)          # refuse cross-site / DNS-rebound requests (HUB-01)
 app.mount("/static", StaticFiles(directory=str(UI)), name="static")
 
 

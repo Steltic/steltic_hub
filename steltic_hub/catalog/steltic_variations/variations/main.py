@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import library, llm, metrics as mx, prompts, scoring, steltic_client as hr
+from . import local_guard
 
 HERE = pathlib.Path(__file__).resolve().parent
 UI = HERE / "ui"
@@ -25,6 +26,7 @@ STELTIC_URL = (os.environ.get("STELTIC_URL") or "").rstrip("/")
 KEEPALIVE = 20.0
 
 app = FastAPI(title="Design variations")
+local_guard.install(app)          # refuse cross-site / DNS-rebound requests (HUB-01)
 app.mount("/static", StaticFiles(directory=str(UI)), name="static")
 
 
