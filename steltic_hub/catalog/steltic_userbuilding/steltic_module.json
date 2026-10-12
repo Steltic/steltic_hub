@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "id": "steltic_userbuilding",
+  "name": "User-designed building",
+  "blurb": "Bring a steel building you designed yourself — the Steltic building template or an ETABS .e2k model. HR Steel models it exactly as given (build-only: nothing resized, nothing invented, every missing key item asked), you confirm the model, and the Nonlinear module runs its full suite on it: pushover, NLRHA, DDM.",
+  "accent": "#7fb3ff",
+  "order": 29,
+  "homepage": "https://github.com/Steltic/steltic_hub",
+  "source": {
+    "bundled": "steltic_userbuilding",
+    "url": "https://github.com/Steltic/steltic_hub"
+  },
+  "needs": ["steltic", "steltic_nonlinear"],
+  "env": {
+    "python": "3.12",
+    "install": ["-r", "requirements.txt"]
+  },
+  "env_vars": {
+    "STELTIC_URL": "{server.steltic}",
+    "HUB_URL": "{hub_url}",
+    "HR_JOBS": "{data_dir}/modules_data/steltic/sessions/local/jobs",
+    "NL_PYTHON": "{python.steltic_nonlinear}",
+    "NL_DIR": "{need.steltic_nonlinear}",
+    "STELTIC_ENGINE_DIR": "{need.steltic}/steel_engine",
+    "UB_JOBS": "{jobs_dir}"
+  },
+  "server": {
+    "command": ["-m", "uvicorn", "userbuilding.main:app", "--host", "127.0.0.1", "--port", "{port}"],
+    "health": "/healthz",
+    "cwd": "{module_dir}",
+    "requires": ["steltic"]
+  },
+  "output": {
+    "root": "{job_dir}"
+  },
+  "tabs": [
+    {
+      "id": "building",
+      "title": "Your building",
+      "kind": "embed",
+      "src": "/?project={job}",
+      "blurb": "1 Upload the template or the .e2k. 2 Answer what HR asks — key items have no default; proposed defaults are used only once you accept them, and are printed in every report. 3 HR builds the model (build-only). 4 Check the model in the 3-D viewer and confirm it. 5 Collect the specification values and run the full nonlinear suite. Every report is labelled “user-designed building: design basis supplied by the user, not checked by Steltic HR”."
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "kind": "files"
+    }
+  ]
+}

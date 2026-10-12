@@ -464,6 +464,17 @@ capacity* for reliability calibration. Here the same sampling is applied to the 
    `report.html` / `results.csv` / `summary.json` in `<project>/probabilistic/`. A ratio above 1.0
    is a place to look, not a code requirement to act — the code is satisfied on the nominal model.
 
+## User-designed building
+
+A bundled module (`catalog/steltic_userbuilding/`) for a steel building the user designed. The page takes the
+Steltic building template or an ETABS `.e2k`, hands it to HR Steel's build-only intake, shows HR's missing items as
+questions (key items have no default; proposed defaults are used only once accepted; refused items are outside
+version 1), has HR build the model exactly as given, shows the 3-D model beside the Nonlinear module's confirmation
+checks (`snl confirm`; the user's own T1 / V / W are compared as warnings only), and after the confirmation starts
+the Nonlinear module's Collect specification values and Run analyses through the hub -- the same staging, gates and
+run history as a click on those buttons. Nothing is modelled or analysed by the module itself.
+`tests/test_userbuilding.py`.
+
 ## Admin
 
 A bundled module (`catalog/steltic_admin/`; fastapi + uvicorn + httpx in its own venv) that runs
@@ -584,7 +595,8 @@ steltic_hub/
   catalog/       manifests for the four existing repos, plus assets a manifest needs
                  (steltic_grokbot/rag_server.py: the grounding server) and the bundled
                  Design variations (steltic_variations/), Probabilistic analysis
-                 (steltic_probabilistic/) and Admin (steltic_admin/) modules
+                 (steltic_probabilistic/), User-designed building (steltic_userbuilding/) and
+                 Admin (steltic_admin/) modules
   ui/            the shell (index.html, app.js, styles.css)
 windows/         first-run bootstrap + launcher
 tauri/           optional native shell

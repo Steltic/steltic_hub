@@ -15,7 +15,8 @@ from steltic_hub.manifest import Manifest, ManifestError, Run, load_catalog   # 
 from steltic_hub import config, runners                                       # noqa: E402
 
 CATALOG = config.CATALOG_DIR
-GUARDED = ("steltic_admin/admin", "steltic_variations/variations", "steltic_probabilistic/probabilistic")
+GUARDED = ("steltic_admin/admin", "steltic_variations/variations", "steltic_probabilistic/probabilistic",
+           "steltic_userbuilding/userbuilding")
 
 
 # ================================================================ HUB-01

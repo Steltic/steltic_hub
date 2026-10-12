@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>User-designed building</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  :root{--accent:#7fb3ff;--info:#7fb3ff}
+  .about{border:1px solid var(--line);border-radius:8px;padding:14px 18px;margin-bottom:14px;background:var(--panel2)}
+  .about p{font-size:13px;color:var(--dim);margin:6px 0;max-width:980px}
+  .about b{color:var(--ink);font-weight:500}
+  .grp{margin:14px 0 6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+  .item{border:1px solid var(--line);border-radius:7px;padding:9px 12px;margin:6px 0;background:var(--panel)}
+  .item .q{font-size:13px}
+  .item .why{font-size:11.5px;color:var(--dimmer);margin-top:2px}
+  .item .ans{margin-top:7px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .item .ans input[type=text],.item .ans select{max-width:340px}
+  .item.key{border-left:3px solid var(--warn)} .item.default{border-left:3px solid var(--info)}
+  .item.refused{border-left:3px solid var(--bad)} .item.info{border-left:3px solid var(--line2);opacity:.85}
+  .tag{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;border-radius:4px;padding:1px 6px;margin-right:6px}
+  .tag.key{background:#3a2f15;color:var(--warn)} .tag.default{background:#16263a;color:var(--info)}
+  .tag.refused{background:#3a1c18;color:var(--bad)} .tag.info{background:#26221c;color:var(--dim)}
+  .counts{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px}
+  .counts span{font-size:12px;border:1px solid var(--line);border-radius:5px;padding:2px 8px;color:var(--dim)}
+  table.ck{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.ck td,table.ck th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+  .st-pass{color:var(--ok)} .st-fail{color:var(--bad)} .st-warn{color:var(--warn)} .st-skipped{color:var(--dimmer)}
+  iframe.viewer{width:100%;height:560px;border:1px solid var(--line);border-radius:8px;background:#0b0a08}
+  .banner{border:2px solid #1f4e8c;background:#13233a;color:#cfe0ff;padding:10px 12px;border-radius:7px;font-size:12.5px;margin:10px 0}
+  ul.small{font-size:12px;color:var(--dim);margin:4px 0 4px 18px}
+</style>
+</head>
+<body>
+<header id="top">
+  <span class="brand">Steltic <b>User-designed building</b></span>
+  <span id="projname" class="proj"></span>
+  <span class="sp"></span>
+  <span id="status" class="note"></span>
+</header>
+<nav id="steps"></nav>
+<main id="main"></main>
+<div id="toasts"></div>
+<div id="modal" hidden><div class="box"><div class="mh"></div><div class="mb"></div><div class="mf"></div></div></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

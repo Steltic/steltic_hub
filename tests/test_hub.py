@@ -16,7 +16,13 @@ from steltic_hub import config, jobs, runners                            # noqa:
 def test_every_bundled_manifest_parses():
     cat = load_catalog(config.CATALOG_DIR)
     assert set(cat) == {"steltic", "steltic_cfs", "steltic_nonlinear", "steltic_grokbot", "steltic_variations",
-                        "steltic_probabilistic", "steltic_admin"}
+                        "steltic_probabilistic", "steltic_admin", "steltic_userbuilding"}
+    ub = cat["steltic_userbuilding"]
+    assert ub.bundled == "steltic_userbuilding" and ub.needs == ["steltic", "steltic_nonlinear"]
+    assert ub.server.get("requires") == ["steltic"] and ub.env_vars["NL_PYTHON"] == "{python.steltic_nonlinear}"
+    for f in ("userbuilding/main.py", "userbuilding/hub.py", "userbuilding/local_guard.py", "userbuilding/ui/index.html",
+              "userbuilding/ui/app.js", "requirements.txt"):
+        assert (config.CATALOG_DIR / ub.bundled / f).is_file(), f
     for m in cat.values():
         assert m.tabs and m.name
         assert m.git or m.bundled
@@ -1050,7 +1056,7 @@ def test_a_port_once_given_to_a_module_stays_its_own(monkeypatch, tmp_path):
 def test_bundled_servers_never_let_the_browser_cache_a_stale_asset():
     """Belt and braces for the same fault: the three bundled servers mark every response no-cache."""
     for rel in ("steltic_admin/admin/main.py", "steltic_variations/variations/main.py",
-                "steltic_probabilistic/probabilistic/main.py"):
+                "steltic_probabilistic/probabilistic/main.py", "steltic_userbuilding/userbuilding/main.py"):
         src = (config.CATALOG_DIR / rel).read_text(encoding="utf-8")
         assert "_no_stale_assets" in src and '"Cache-Control"' in src, rel
 
@@ -1252,7 +1258,7 @@ def test_a_server_backed_module_is_visible_in_the_rail():
     from fastapi.testclient import TestClient
     with TestClient(app) as c:
         mods = {m["id"]: m for m in c.get("/api/state").json()["modules"]}
-    for mid in ("steltic_admin", "steltic_variations", "steltic_probabilistic"):
+    for mid in ("steltic_admin", "steltic_variations", "steltic_probabilistic", "steltic_userbuilding"):
         assert mid in mods, f"{mid} missing from /api/state"
         assert mods[mid]["has_server"] is True, f"{mid} is server-backed"
         assert "server_up" in mods[mid], f"{mid} must publish server_up for the rail"
