@@ -1,0 +1,15 @@
+name: Engineering or code question
+description: A design result or code clause interpretation looks wrong
+labels: [engineering]
+body:
+  - type: input
+    id: clause
+    attributes: {label: Standard and clause, placeholder: "AISC 341-22 F2.5a"}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: What the report says and what you expected, description: "Quote the report line, and give the clause reference with a short quote only (never whole pages of a copyrighted specification)."}
+    validations: {required: true}
+  - type: textarea
+    id: job
+    attributes: {label: Job, description: "Example id or brief, and the governing member / connection."}

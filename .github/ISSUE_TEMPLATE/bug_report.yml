@@ -1,0 +1,22 @@
+name: Bug report
+description: Something in Steltic Hub did not work
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes: {label: Version or commit, placeholder: "v0.2.3 or abc1234"}
+    validations: {required: true}
+  - type: dropdown
+    id: os
+    attributes: {label: Operating system, options: [Windows 11, Windows 10, macOS, Linux]}
+    validations: {required: true}
+  - type: input
+    id: model
+    attributes: {label: LLM and provider, placeholder: "e.g. model name via provider, or MOCK"}
+  - type: textarea
+    id: what
+    attributes: {label: What happened, description: "Steps, the example (ex1 … ex35, cfs ex1 … ex30) or your brief, and the error text."}
+    validations: {required: true}
+  - type: textarea
+    id: logs
+    attributes: {label: Logs, description: "Paste the run log or attach STATUS.md / run_stdout.txt. Remove API keys.", render: text}
