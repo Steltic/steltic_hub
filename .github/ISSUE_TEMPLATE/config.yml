@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://github.com/Steltic/steltic_hub/discussions/categories/q-a
+    about: Install and usage questions go to Discussions on the Hub.
+  - name: Worked examples and videos
+    url: https://stelticai.com
+    about: Reports and 3D models of the worked examples.

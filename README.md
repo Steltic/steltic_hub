@@ -1,8 +1,20 @@
 # Steltic Hub
 
-One window over every Steltic module. The hub installs each module from GitHub into its own
-Python environment, renders its input tabs from a manifest, runs it, and frames its viewers —
-so `steltic_viewer_bundle.html` stops being a results-only page and becomes the app.
+[![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Steltic/steltic_hub?color=orange)](https://github.com/Steltic/steltic_hub/releases)
+[![python any + uv](https://img.shields.io/badge/python-any%20%2B%20uv-blue.svg)](pyproject.toml)
+
+![Steltic Hub](docs/img/social_hub.png)
+
+One local app over every Steltic module: AISC design, AISI cold-formed design, nonlinear checks, spec grounding,
+design variations and probabilistic analysis. The hub installs each module from GitHub into its own Python
+environment, renders its input tabs from a manifest, runs it, and frames its viewers, so
+`steltic_viewer_bundle.html` stops being a results-only page and becomes the app.
+
+- **Start here.** The Hub installs the design modules for you.
+- **See the output first:** 61 worked buildings with reports and 3D models at [stelticai.com](https://stelticai.com).
+- **Video:** [Steltic Hub installation](https://www.youtube.com/watch?v=LNHzOBkjicM).
+- **Indian Standards edition:** [steltic_hub_india](https://github.com/Steltic/steltic_hub_india).
 
 ```
    Tauri window / Edge --app / any browser          <- swappable, ~0 logic
@@ -48,6 +60,10 @@ git clone https://github.com/Steltic/steltic_hub
 cd steltic_hub
 windows\Steltic.bat            # first run fetches uv + Python + the hub, then opens the window
 ```
+
+If you downloaded the repo as a ZIP instead of cloning it, Windows may show a SmartScreen or 'Open File – Security
+Warning' prompt for `Steltic.bat` because the script is not code-signed. Choose More info → Run anyway, or
+clone with git.
 
 **Linux and macOS**
 

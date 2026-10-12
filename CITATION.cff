@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Steltic Hub: one local app over the Steltic steel design modules"
+authors:
+  - name: "Steltic"
+version: "0.2.2"
+date-released: "2026-10-12"
+license: MIT
+repository-code: "https://github.com/Steltic/steltic_hub"
+url: "https://stelticai.com"
+keywords: [structural engineering, steel design, AISC 360, AISI S100, ASCE 7, OpenSees, AI agent]
