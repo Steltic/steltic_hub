@@ -159,3 +159,42 @@ def test_hub_client_sends_the_action(monkeypatch):
     monkeypatch.setattr(uh.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **{k: v for k, v in kw.items() if k != "transport"}))
     out = uh.HubClient("http://hub").run("steltic_nonlinear", "run", "P", {"job": "P"}, lambda e: None, action="collect")
     assert out["ok"] and sent["body"] == {"job": "P", "fields": {"job": "P"}, "action": "collect"}
+
+
+def test_do_not_collect_skips_collect_and_the_run_tab_opens_on_its_own_opt_out(monkeypatch):
+    """The tick box on step 5 used to skip Collect and then the hub refused Run analyses ("Collect
+    specification values first"): the run tab's gate knew nothing of the choice. Now the page sends the
+    Nonlinear tab's own opt-out field, which opens the gate and passes --no-collect."""
+    j = pathlib.Path(os.environ["HR_JOBS"]) / "B4"
+    j.mkdir(parents=True, exist_ok=True)
+    (j / "nl_basis.json").write_text(json.dumps({"confirmed": True}))
+    seen = []
+
+    def fake_run(self, module, tab, project, fields, on_event, should_stop=None, action=None):
+        seen.append((action, dict(fields)))
+        return {"ok": True, "rc": 0, "errors": [], "cancelled": False, "artifacts": []}
+    monkeypatch.setattr(uh.HubClient, "run", fake_run)
+    for body in ({"n_records": 3, "skip_collect": True}, {"n_records": 3, "collect": False}):      # new and old spelling
+        seen.clear()
+        assert client.post("/api/project/B4/run", json=body).status_code == 202
+        for _ in range(100):
+            st = client.get("/api/project/B4/run").json()
+            if st["state"] != "running":
+                break
+            time.sleep(0.05)
+        assert st["state"] == "done", st
+        assert [a for a, _ in seen] == [None], "Collect is not run"
+        assert seen[0][1] == {"job": "B4", "n_records": 3, "no_collect": True}
+        assert st["collect"] is False and st["collected"] is False
+
+
+def test_the_opt_out_field_opens_the_real_nonlinear_gate():
+    """The field the page sends is the one the Nonlinear manifest names as the waiver of its gate."""
+    import json as _j
+    from steltic_hub.manifest import Manifest
+    cat = ROOT / "steltic_hub" / "catalog" / "steltic_nonlinear.json"
+    m = Manifest.parse(_j.loads(cat.read_text(encoding="utf-8")), "t")
+    run = next(t for t in m.tabs if t.id == "run")
+    assert run.run.requires[0]["waive"] == "no_collect"
+    f = next(f for f in run.fields if f.id == "no_collect")
+    assert f.type == "checkbox" and f.arg == "--no-collect" and f.arg_style == "flag-if-true"

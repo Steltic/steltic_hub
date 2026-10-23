@@ -39,7 +39,7 @@
       "title": "Your building",
       "kind": "embed",
       "src": "/?project={job}",
-      "blurb": "1 Upload the template or the .e2k. 2 Answer what HR asks — key items have no default; proposed defaults are used only once you accept them, and are printed in every report. 3 HR builds the model (build-only). 4 Check the model in the 3-D viewer and confirm it. 5 Collect the specification values and run the full nonlinear suite. Every report is labelled “user-designed building: design basis supplied by the user, not checked by Steltic HR”."
+      "blurb": "1 Upload the template or the .e2k. 2 Answer what HR asks — key items have no default; proposed defaults are used only once you accept them, and are printed in every report. 3 HR builds the model (build-only). 4 Check the model in the 3-D viewer and confirm it. 5 Collect the specification values and run the full nonlinear suite (or tick “Do not collect specification values now” to run without them; the reports then come back marked UNVERIFIED). Every report is labelled “user-designed building: design basis supplied by the user, not checked by Steltic HR”."
     },
     {
       "id": "files",

@@ -10,7 +10,9 @@ A user brings a steel building they designed. This page walks it through:
                  the user's own T1 / V / W compared (warning only); Confirm writes nl_basis.json;
   5. run         through the hub, as a click would: the Nonlinear module's Collect specification values, then Run
                  analyses (the hub stages HR's package -- provenance.json and nl_basis.json with it -- into the
-                 project and keeps the run history).
+                 project and keeps the run history). "Do not collect specification values now" skips Collect and
+                 runs with the Nonlinear tab's own opt-out (--no-collect): the reports come back marked UNVERIFIED
+                 and say the values were not collected.
 Nothing here models, sizes or analyses anything itself; HR Steel and the Nonlinear module do, with their own rules.
 """
 from __future__ import annotations
@@ -225,6 +227,9 @@ def _save_run(p, st):
         pass
 
 
+COLLECTED = "hinge_params_collected.json"          # what the Nonlinear module's Collect writes into the project
+
+
 def _nl_worker(p, fields, do_collect):
     st = _RUNS[p]
     hub = HubClient(HUB_URL)
@@ -253,7 +258,13 @@ def _nl_worker(p, fields, do_collect):
                 st["error"] = "Collect specification values did not finish: %s" % ("; ".join(out.get("errors") or []) or "rc %s" % out.get("rc"))
                 return
         st["phase"] = "run"
-        out = hub.run("steltic_nonlinear", "run", p, fields, on_event, should_stop=lambda: st.get("stop"))
+        run_fields = dict(fields)
+        if not do_collect:
+            # The Nonlinear Run tab opens without hinge_params_collected.json only when its own tick box says so
+            # (manifest `waive`); without this field the hub refused the run with "Collect specification values
+            # first" -- the opt-out on this page used to end there.
+            run_fields["no_collect"] = True
+        out = hub.run("steltic_nonlinear", "run", p, run_fields, on_event, should_stop=lambda: st.get("stop"))
         st["run"] = {k: out.get(k) for k in ("ok", "rc", "errors", "cancelled", "artifacts")}
         st["state"] = "done" if out.get("ok") else ("cancelled" if out.get("cancelled") else "failed")
         if not out.get("ok") and not out.get("cancelled"):
@@ -285,8 +296,10 @@ async def run_nl(p: str, request: Request):
         for k in ("n_records", "site_class", "only"):
             if body.get(k) not in (None, ""):
                 fields[k] = body[k]
-        _RUNS[p] = dict(state="running", phase="", started=time.time(), events=[], fields=fields)
-    threading.Thread(target=_nl_worker, args=(p, fields, bool(body.get("collect", True))), daemon=True).start()
+        # "Do not collect specification values now" (skip_collect); `collect: false` is the older page's spelling
+        do_collect = not bool(body.get("skip_collect")) and bool(body.get("collect", True))
+        _RUNS[p] = dict(state="running", phase="", started=time.time(), events=[], fields=fields, collect=do_collect)
+    threading.Thread(target=_nl_worker, args=(p, fields, do_collect), daemon=True).start()
     return JSONResponse({"state": "running"}, status_code=202)
 
 
@@ -307,4 +320,5 @@ def run_state(p: str, since: int = 0):
         f = _run_file(p)
         st = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {"state": "none", "events": []}
     ev = st.get("events") or []
-    return {k: v for k, v in st.items() if k not in ("events", "stop")} | {"events": ev[since:], "next": len(ev)}
+    return {k: v for k, v in st.items() if k not in ("events", "stop")} | {
+        "events": ev[since:], "next": len(ev), "collected": (UB_JOBS / p / COLLECTED).exists()}
