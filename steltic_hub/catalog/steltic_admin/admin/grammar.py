@@ -4,6 +4,10 @@
     run J1 (ex22) to hr then to nl, when all done run J2 with ex3 to cfs
     Tower_A -> hr, nl
     J4 continue: make the exterior columns W24x146 and rerun
+    J1 to hr; J2 to hr; J3 to hr -- 3 at a time
+
+`N at a time` / `N lanes` / `in N lanes` / `N in parallel` / `parallel N` anywhere in the text sets the
+plan option lanes = N: up to N projects run at once, each project's steps still in order.
 
 A clause names a project (anything that is not a known word: `J1`, `Tower_A`, `27_High_St`), one or
 more module aliases in the order they should run, and optionally where the design brief comes from --
@@ -41,12 +45,25 @@ FILLER = {"run", "then", "to", "the", "a", "an", "and", "when", "all", "done", "
           "first", "second", "third", "finally", "lastly", "go", "send", "do", "through", "into", "again",
           "of", "in", "as", "is", "are", "be", "start", "kick", "off", "job", "jobs", "building", "buildings",
           "->", "=>", ">", "-", "+", "&", "module", "modules", "app", "via", "up", "same", "this", "these", "those",
-          "etc", "etc.", "so", "too", "now", "ok", "okay"}
+          "etc", "etc.", "so", "too", "now", "ok", "okay", "--", "—", "–"}
 CLAUSE_SPLIT = re.compile(r"(?:\s*;\s*|\s*\n+\s*|\s*\bthen\b\s*|\s*\bafter that\b\s*"
                           r"|\s*\bwhen (?:all|that|it|they)(?: is| are)? (?:done|finished|complete)\b\s*|\s*\bnext\b\s*)", re.I)
 BRIEF_PAREN = re.compile(r"[\(\[]\s*([A-Za-z0-9_.\-]+)\s*[\)\]]")
 EXAMPLE = re.compile(r"^(?:ex|example)[_-]?(\d+[a-z]?|redesign)$", re.I)
 PROJECT = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+LANES = re.compile(r"(?:\bin\s+)?\b(\d{1,2})\s*(?:lanes?\b|at\s+a\s+time\b|at\s+once\b|in\s+parallel\b|parallel\b|simultaneous(?:ly)?\b|concurrent(?:ly)?\b)"
+                   r"|\b(?:parallel|lanes?)\s*[:=]?\s*(\d{1,2})\b", re.I)
+
+
+def lanes_in(text: str) -> tuple[int | None, str]:
+    """`3 at a time` / `3 lanes` / `in 3 lanes` / `3 in parallel` / `parallel 3` -> (3, the text without it)."""
+    m = LANES.search(text or "")
+    if not m:
+        return None, text
+    n = int(m.group(1) or m.group(2))
+    return n, (text[:m.start()] + " " + text[m.end():])
 
 
 def _alias(word: str) -> tuple[str, str] | None:
@@ -58,9 +75,13 @@ def _alias(word: str) -> tuple[str, str] | None:
 
 
 def parse(text: str) -> dict:
-    """-> {"steps": [{project, module, tab, fields}], "warnings": [...], "clauses": [...]}"""
+    """-> {"steps": [{project, module, tab, fields}], "warnings": [...], "clauses": [...], "options": {...}}"""
     steps: list[dict] = []
     warnings: list[str] = []
+    options: dict = {}
+    lanes, text = lanes_in(text)
+    if lanes:
+        options["lanes"] = lanes
     clauses = [c.strip() for c in CLAUSE_SPLIT.split(text or "") if c and c.strip()]
     project: str | None = None
 
@@ -135,7 +156,7 @@ def parse(text: str) -> dict:
         if not mods and raw.strip():
             warnings.append(f"no module named in “{raw}” (say hr, cfs, nl …)")
         flush(proj, mods, brief_src, follow, raw)
-    return {"steps": steps, "warnings": warnings, "clauses": clauses}
+    return {"steps": steps, "warnings": warnings, "clauses": clauses, "options": options}
 
 
 def _brief_source(token: str) -> str:

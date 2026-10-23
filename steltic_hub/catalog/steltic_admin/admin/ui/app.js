@@ -137,15 +137,21 @@ function renderBatch(m) {
     const hasFailed = p.steps.some(s => s.status === 'failed');
     const saved_progress = p.steps.some(s => ['stopped', 'failed'].includes(s.status) && s.resume);
     const retryCb = el('input', { type: 'checkbox', checked: hasFailed && p.status === 'failed' });
+    const lanesNow = (p.options && p.options.lanes) || 1;
+    const lanesIn = el('input', { type: 'number', min: 1, max: 8, step: 1, value: lanesNow, disabled: running, style: 'width:4.2em',
+      title: 'how many projects run at the same time; each project\'s steps still run in order (Save to keep it)',
+      onchange: () => { const v = Math.max(1, Math.min(8, parseInt(lanesIn.value, 10) || 1)); lanesIn.value = v;
+        S.plan = { ...S.plan, options: { ...(S.plan.options || {}), lanes: v } }; toast(v > 1 ? `${v} projects at a time -- Save to keep it` : 'one step at a time -- Save to keep it'); } });
     const freshCb = el('input', { type: 'checkbox' });
     acts.append(...[
       el('button', { onclick: savePlan }, saved ? 'Save changes' : 'Save'),
       el('button', { class: 'primary', disabled: running || !saved, onclick: () => act('start'), title: saved ? '' : 'save first' }, 'Start'),
+      el('label', { class: 'note', title: 'how many projects run at the same time; each project\'s steps still run in order' }, 'parallel lanes ', lanesIn),
       canResume ? el('button', { onclick: () => act('resume', { retry_failed: retryCb.checked, fresh: freshCb.checked }),
         title: saved_progress ? 'a stopped or failed design is continued from the conversation its module saved, not started over' : '' }, saved_progress ? 'Resume (continues where it stopped)' : 'Resume') : null,
       canResume && hasFailed ? el('label', { class: 'note', title: 'run the failed steps again as well as the pending ones' }, retryCb, ' retry failed steps') : null,
       canResume && saved_progress ? el('label', { class: 'note', title: 'ignore what the module saved and start those steps from the beginning' }, freshCb, ' start them over') : null,
-      running ? el('button', { class: 'danger', onclick: () => act('stop') }, 'Stop (cancels the current run; Resume continues it)') : null,
+      running ? el('button', { class: 'danger', onclick: () => act('stop') }, lanesNow > 1 ? 'Stop (cancels every lane\'s run; Resume continues them)' : 'Stop (cancels the current run; Resume continues it)') : null,
       saved && !running ? el('button', { class: 'ghost danger', onclick: async () => { if (!confirm('Delete this plan and its logs?')) return; await api('/api/plans/' + p.id, { method: 'DELETE' }); S.plan = null; paintPlan(); refreshList(); } }, 'Delete') : null,
       el('button', { class: 'ghost', onclick: async () => { try { const d = await api('/api/plan/validate', { method: 'POST', body: { plan: p } }); showProblems(probs, d.errors, d.warnings); if (!d.errors.length) toast('the plan can run', 'ok'); } catch (e) { toast(e.message, 'bad'); } } }, 'Check'),
     ].filter(Boolean));
@@ -161,7 +167,8 @@ function renderBatch(m) {
         el('td', {}, el('span', { class: 'st ' + s.status }, s.status), s.attempts > 1 ? ` ×${s.attempts}` : '',
           s.continued ? el('span', { class: 'note', title: `continued ${s.continued}× from where it stopped (after a pause or an error)` }, ` ↻${s.continued}`) : '',
           s.waited ? el('span', { class: 'note', title: `waited ${s.waited}× for the model server / the hub to come back` }, ` ⏳${s.waited}`) : '',
-          s.ran_tab && s.ran_tab !== s.tab ? el('span', { class: 'note', title: 'the run that actually happened last' }, ` via ${s.ran_tab}`) : ''),
+          s.ran_tab && s.ran_tab !== s.tab ? el('span', { class: 'note', title: 'the run that actually happened last' }, ` via ${s.ran_tab}`) : '',
+          s.lane && lanesNow > 1 ? el('span', { class: 'note', title: 'the parallel lane that ran it' }, ` L${s.lane}`) : ''),
         el('td', {}, s.started ? fmtDur(s.started, s.ended) : ''),
         el('td', { style: (s.status === 'running' || s.status === 'done' ? 'color:var(--dim)' : 'color:var(--bad)') + ';font-size:11.5px' }, s.note || (s.artifacts && s.artifacts.length ? el('span', { style: 'color:var(--ok)' }, s.artifacts.map(a => a.label || a.path).join(', ')) : ''))));
     });
@@ -169,12 +176,12 @@ function renderBatch(m) {
       el('th', {}, '#'), el('th', {}, 'project'), el('th', {}, 'module / tab'), el('th', {}, 'what'), el('th', {}, 'status'), el('th', {}, 'took'), el('th', {}, 'result'))), tb);
     // editor
     const ed = el('textarea', { class: 'mono', rows: 10, spellcheck: false });
-    ed.value = JSON.stringify({ title: p.title, options: p.options || { wait_for_llm: true, auto_continue: 3 }, steps: p.steps.map(s => ({ project: s.project, module: s.module, tab: s.tab, fields: s.fields, on_fail: s.on_fail, label: s.label || undefined })) }, null, 1);
+    ed.value = JSON.stringify({ title: p.title, options: p.options || { wait_for_llm: true, auto_continue: 3, lanes: 1 }, steps: p.steps.map(s => ({ project: s.project, module: s.module, tab: s.tab, fields: s.fields, on_fail: s.on_fail, label: s.label || undefined })) }, null, 1);
     const apply = el('button', { class: 'small', onclick: () => {
       try { const d = JSON.parse(ed.value); S.plan = { ...p, title: d.title || p.title, options: d.options || p.options, steps: (d.steps || []).map((s, i) => ({ ...s, n: i + 1, status: 'pending', fields: s.fields || {} })) }; paintPlan(); toast('applied -- Save to keep it'); }
       catch (e) { toast('not valid JSON: ' + e.message, 'bad'); }
     } }, 'Apply JSON');
-    const details = el('details', { open: !p.steps.length }, el('summary', { class: 'note', style: 'cursor:pointer' }, 'edit the plan as JSON (fields: "@project" = brief.md in the project folder, "@example:ex22", "@file:name", or the value itself; on_fail: stop | skip_project | continue; options.wait_for_llm: wait for the model server as long as it takes, then continue; options.auto_continue: how many times a paused or failed design is continued by itself)'),
+    const details = el('details', { open: !p.steps.length }, el('summary', { class: 'note', style: 'cursor:pointer' }, 'edit the plan as JSON (fields: "@project" = brief.md in the project folder, "@example:ex22", "@file:name", or the value itself; on_fail: stop | skip_project | continue; options.wait_for_llm: wait for the model server as long as it takes, then continue; options.auto_continue: how many times a paused or failed design is continued by itself; options.lanes: how many projects run at the same time, each project\'s steps in order)'),
       ed, el('div', { class: 'row', style: 'margin-top:6px' }, apply));
     // log
     const logBox = el('div', { style: 'margin-top:12px' });

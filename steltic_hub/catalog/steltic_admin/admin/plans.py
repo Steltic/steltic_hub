@@ -1,10 +1,14 @@
 """Plans: what to run, in what order, and what happened.
 
 A plan is a list of steps, each one exactly what a click on a module tab would send the hub:
-(module, tab, project, fields). Steps run one after another in ONE worker thread -- the modules
-are heavy (OpenSees, Docling) and the design servers hold one conversation per building, so nothing
-here runs two steps at once. The thread holds each run's event stream open until the hub says it is
-done, writes the events to a log file, and records the outcome in the plan.
+(module, tab, project, fields). By default steps run one after another in ONE worker thread -- the
+modules are heavy (OpenSees, Docling). With the plan option `lanes` = N (2..MAX_LANES) up to N
+PROJECTS run at the same time: each lane takes the next project and runs that project's steps in
+order (J1 hr then nl stays a sequence), then takes the next project. Two lanes never hold the same
+project -- the design servers keep one conversation per building -- and every design server runs its
+engine in separate processes, so two buildings do not share OpenSees. The worker holds each run's
+event stream open until the hub says it is done, writes the events to a log file, and records the
+outcome in the plan.
 
 Everything lives under <ADMIN_DATA>: plans/<id>.json (the plan and its progress, rewritten after
 every change) and logs/<id>/<n>.log (one per step). A restart of Admin's server finds a plan that
@@ -37,7 +41,8 @@ PLAN_STATUS = ("draft", "running", "done", "failed", "stopped", "interrupted")
 ON_FAIL = ("stop", "skip_project", "continue")
 TEXT_FIELDS = ("text", "textarea")
 BRIEF_NAMES = ("brief.md", "brief.txt", "brief.markdown", "BRIEF.md", "Brief.md")
-OPTIONS = {"wait_for_llm": True, "auto_continue": 3}
+OPTIONS = {"wait_for_llm": True, "auto_continue": 3, "lanes": 1}
+MAX_LANES = 8                # projects at once; each design is an LLM conversation plus engine processes
 WAIT_CHECK = 30.0            # seconds between checks while waiting for the model server / the hub
 WAIT_FLOOR = (30, 60, 120, 300)   # the least a wait lasts, by how many waits this step has already had (last value repeats)
 
@@ -86,6 +91,10 @@ def normalise_options(o) -> dict:
             out["auto_continue"] = max(0, min(int(o.get("auto_continue", out["auto_continue"])), 50))
         except (TypeError, ValueError):
             pass
+        try:
+            out["lanes"] = max(1, min(int(o.get("lanes", out["lanes"])), MAX_LANES))
+        except (TypeError, ValueError):
+            pass
     return out
 
 
@@ -115,7 +124,9 @@ def normalise_step(s: dict, n: int) -> dict:
             # what actually ran last (the step's tab, or the tab that continues it)
             "ran_tab": s.get("ran_tab"),
             # how often Admin carried this step on by itself: waits for the server, and continues after a pause / error
-            "waited": int(s.get("waited") or 0), "continued": int(s.get("continued") or 0)}
+            "waited": int(s.get("waited") or 0), "continued": int(s.get("continued") or 0),
+            # the parallel lane that ran it last (plans with options.lanes > 1)
+            "lane": s.get("lane")}
 
 
 class Store:
@@ -158,7 +169,15 @@ class Store:
             plan["updated"] = time.time()
             p = self.path(plan["id"])
             tmp = p.with_suffix(".tmp")
-            tmp.write_text(json.dumps(plan, indent=1), encoding="utf-8")
+            for i in range(20):                    # lanes update their own steps while another lane saves the plan
+                try:
+                    text = json.dumps(plan, indent=1)
+                    break
+                except RuntimeError:               # a dict changed size mid-dump: take it again
+                    if i == 19:
+                        raise
+                    time.sleep(0.005)
+            tmp.write_text(text, encoding="utf-8")
             _replace(tmp, p)
 
     def delete(self, plan_id: str):
@@ -220,7 +239,8 @@ class Executor:
         self._thread: threading.Thread | None = None
         self._running: str | None = None            # plan id
         self._stop_flag: set[str] = set()
-        self._current_run: dict[str, str] = {}
+        self._current_run: dict[str, dict[int, str]] = {}   # plan id -> {step n: hub run id} (one per lane)
+        self._runs_lock = threading.Lock()
         self._recover()
 
     def _recover(self):
@@ -243,7 +263,23 @@ class Executor:
         return self._running if self._thread and self._thread.is_alive() else None
 
     def current_run(self, plan_id: str) -> str | None:
-        return self._current_run.get(plan_id)
+        """The run in flight (the first one, when lanes run several)."""
+        runs = self.current_runs(plan_id)
+        return runs[0] if runs else None
+
+    def current_runs(self, plan_id: str) -> list[str]:
+        with self._runs_lock:
+            d = self._current_run.get(plan_id) or {}
+            return [d[k] for k in sorted(d)]
+
+    def _set_run(self, plan_id: str, n: int, run_id: str | None):
+        with self._runs_lock:
+            if run_id:
+                self._current_run.setdefault(plan_id, {})[n] = run_id
+            else:
+                d = self._current_run.get(plan_id)
+                if d:
+                    d.pop(n, None)
 
     # ---------- validation (against what the hub says exists right now)
     def validate(self, plan: dict, state: dict | None = None) -> tuple[list[str], list[str]]:
@@ -290,6 +326,13 @@ class Executor:
             unknown = [k for k in st["fields"] if k not in {f["id"] for f in tab.get("fields") or []}]
             if unknown:
                 warnings.append(f"{who}: fields not declared by the tab are passed through untouched: {', '.join(unknown)}")
+        lanes = normalise_options(plan.get("options"))["lanes"]
+        if lanes > 1:
+            projects = {st.get("project") for st in plan.get("steps") or []}
+            if len(projects) < 2:
+                warnings.append(f"options.lanes = {lanes}, but the plan has one project: its steps run in order, one at a time")
+            if any(st.get("module") == "steltic_grokbot" for st in plan.get("steps") or []):
+                warnings.append("standards conversions in parallel lanes compete for the whole machine -- keep them in a lanes = 1 plan")
         return errors, warnings
 
     def _check_source(self, project: str, v: str, field: dict) -> str | None:
@@ -388,8 +431,7 @@ class Executor:
 
     def stop(self, plan_id: str) -> bool:
         self._stop_flag.add(plan_id)
-        rid = self._current_run.get(plan_id)
-        if rid:
+        for rid in self.current_runs(plan_id):     # every lane's run
             self.hub.cancel(rid)
         return True
 
@@ -403,7 +445,8 @@ class Executor:
                 plan["note"] = "Admin's worker crashed:\n" + traceback.format_exc()[-2000:]
                 self.store.save(plan)
         finally:
-            self._current_run.pop(plan_id, None)
+            with self._runs_lock:
+                self._current_run.pop(plan_id, None)
             self._stop_flag.discard(plan_id)
 
     def _run_steps(self, plan_id: str):
@@ -411,6 +454,8 @@ class Executor:
         plan["options"] = normalise_options(plan.get("options"))
         state = self.hub.state()
         mods = {m["id"]: m for m in state.get("modules") or []}
+        if plan["options"]["lanes"] > 1:
+            return self._run_lanes(plan, mods)
         skip_projects: set[str] = set()
         final = "done"
         for st in plan["steps"]:
@@ -435,6 +480,9 @@ class Executor:
         else:
             if plan_id in self._stop_flag:
                 final = "stopped"
+        self._finish(plan, final)
+
+    def _finish(self, plan: dict, final: str):
         if final == "done" and any(s["status"] == "failed" for s in plan["steps"]):
             final = "failed"
         plan["status"] = final
@@ -444,6 +492,68 @@ class Executor:
             bad = [f"step {s['n']} ({s['project']} → {s['module']}/{s['tab']}): {s['note']}" for s in plan["steps"] if s["status"] == "failed"]
             plan["note"] = "\n".join(bad)
         self.store.save(plan)
+
+    def _run_lanes(self, plan: dict, mods: dict):
+        """options.lanes > 1: up to that many projects at once. Each lane takes the next project with pending
+        steps and runs ITS steps in plan order, with the serial rules per project (skip_project skips the rest of
+        that project); a failed step with on_fail = stop lets the running steps finish and starts no new one;
+        Stop cancels every lane's run."""
+        plan_id = plan["id"]
+        lanes = plan["options"]["lanes"]
+        by_project: dict[str, list[dict]] = {}
+        for st in plan["steps"]:
+            by_project.setdefault(st["project"], []).append(st)
+        queue = [p for p, sts in by_project.items() if any(s["status"] == "pending" for s in sts)]
+        qlock = threading.Lock()
+        halt = threading.Event()                   # a step failed with on_fail = stop
+        stopped = threading.Event()
+
+        def take():
+            with qlock:
+                return queue.pop(0) if queue and not halt.is_set() and plan_id not in self._stop_flag else None
+
+        def lane(k: int):
+            while True:
+                project = take()
+                if project is None:
+                    return
+                for i, st in enumerate(by_project[project]):
+                    if st["status"] != "pending":
+                        continue
+                    if plan_id in self._stop_flag:
+                        stopped.set(); return
+                    if halt.is_set():
+                        return
+                    st["lane"] = k
+                    log = self.store.log_path(plan_id, st["n"])
+                    with open(log, "a", encoding="utf-8", errors="replace") as lf:
+                        self._run_step(plan, st, mods, _LogWriter(lf))
+                    self.store.save(plan)
+                    if st["status"] == "stopped":
+                        stopped.set(); return
+                    if st["status"] == "failed":
+                        if st["on_fail"] == "stop":
+                            halt.set(); return
+                        if st["on_fail"] == "skip_project":
+                            for rest in by_project[project][i + 1:]:
+                                if rest["status"] == "pending":
+                                    rest.update(status="skipped", note="an earlier step of this project failed")
+                            self.store.save(plan)
+                            break
+
+        threads = [threading.Thread(target=lane, args=(k,), daemon=True, name=f"plan-{plan_id}-lane{k}")
+                   for k in range(1, min(lanes, max(len(queue), 1)) + 1)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if stopped.is_set() or plan_id in self._stop_flag:
+            final = "stopped"
+        elif halt.is_set():
+            final = "failed"
+        else:
+            final = "done"
+        self._finish(plan, final)
 
     # ---------- one step, to its end
     def _run_step(self, plan: dict, st: dict, mods: dict, writer: "_LogWriter"):
@@ -484,7 +594,7 @@ class Executor:
                 outcome = {"ok": False, "rc": None, "cancelled": False, "errors": [f"{type(e).__name__}: {e}"], "artifacts": [], "attempts": 1, "run_id": None}
                 writer.line(f"✖ {type(e).__name__}: {e}")
             writer.flush_tokens()
-            self._current_run.pop(plan_id, None)
+            self._set_run(plan_id, st["n"], None)
             st.update(ended=time.time(), ok=bool(outcome.get("ok")), rc=outcome.get("rc"),
                       attempts=outcome.get("attempts") or 1, artifacts=outcome.get("artifacts") or [],
                       run_id=outcome.get("run_id") or st.get("run_id"))
@@ -571,7 +681,7 @@ class Executor:
         if t == "start":
             if ev.get("run_id"):
                 st["run_id"] = ev["run_id"]
-                self._current_run[plan["id"]] = ev["run_id"]
+                self._set_run(plan["id"], st["n"], ev["run_id"])
                 self.store.save(plan)
             writer.line("$ " + str(ev.get("cmd") or ""))
         elif t == "token":

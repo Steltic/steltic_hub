@@ -48,12 +48,37 @@ JSON. **Check** validates it against what the hub says exists right now: module 
 fields filled, brief file present, LLM connection set for the design modules. **Save**, then
 **Start**.
 
-While it runs: one step at a time, in a worker thread inside Admin's server; each step's event stream
+While it runs: one step at a time, in a worker thread inside Admin's server -- or several projects at
+once with **parallel lanes** (below); each step's event stream
 (the design agents' tokens, tool calls and milestones; a CLI run's stdout; the hub's retries) is
 written to `admin/logs/<plan>/<n>.log`, the step's status, run id, attempts, exit code and
 artifacts to `admin/plans/<plan>.json`. The tab polls and shows the current step's log. **Stop**
 cancels the current run through the hub (`POST /api/cancel`) and ends the plan after it; **Resume**
 runs the steps that are still pending (and, with *retry failed steps*, the failed ones again).
+
+### Parallel lanes — several projects at once
+
+`options.lanes` (1 to 8, default 1) runs that many **projects** at the same time. Set it with the
+**parallel lanes** box next to Start (then Save), in the plan's JSON, or in the instruction itself:
+`3 at a time`, `in 3 lanes`, `3 in parallel` or `parallel 3` anywhere in the text.
+
+```
+J1 to hr; J2 to hr; J3 to hr; … J30 to hr -- 3 at a time
+```
+
+* Each lane takes the next project and runs **that project's steps in order** (`J1 to hr then nl`
+  stays a sequence), then takes the next project. Two lanes never hold the same project.
+* Every step keeps its own log, waits, continues and retries exactly as in a one-lane plan; the steps
+  table shows the lane that ran each one (`L2`).
+* **Stop** cancels every lane's run; **Resume** continues them all.
+* `on_fail: stop` — the runs already going in the other lanes finish, no new project starts, the plan
+  ends `failed`. `skip_project` skips the rest of that project and the lanes carry on.
+* Steps of different projects no longer run in plan order across projects (a lane takes whichever
+  project is next when it frees up).
+
+Mind the machine and the provider: every lane is a full design (an LLM conversation plus the engine's
+processes — allow 3–4 GB of memory each) and they share your API rate limit (a 429 is waited out like
+any server outage). Keep standards conversions in a one-lane plan: Docling uses the whole machine.
 
 ### A step is not one run
 
@@ -139,9 +164,8 @@ exercised without installing a module.
 
 ## Not in this version
 
-* **Two runs at once.** One step at a time, one plan at a time, on purpose: the design servers hold
-  one conversation per building, OpenSees is a process singleton, and the converter eats the machine.
-  A `concurrency` setting could be added to the plan later; the executor is a single thread now.
+* **Two plans at once.** One plan at a time; run several projects at once inside one plan with
+  parallel lanes instead.
 * **Variations / Probabilistic.** Their work is driven through their own servers' APIs, not the hub's
   `/api/run`, so a plan cannot include them yet (the grammar has no alias for them). Driving them
   means Admin calling their `/api/project/<p>/…` routes directly — a later step.
