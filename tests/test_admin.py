@@ -574,3 +574,98 @@ def test_admin_server_routes(tmp_path):
     assert c.post("/api/standards/plan", json={"items": [{"pdf": "a.pdf", "stem": "NOT_A_STEM"}]}).status_code == 400
     assert c.post("/api/help", json={"question": ""}).status_code == 400
     assert c.get("/api/help/history").json()["items"] == []
+
+
+# ---------------------------------------------------------------- parallel lanes (options.lanes)
+def test_lanes_option_and_the_words_that_set_it():
+    assert plans.normalise_options({})["lanes"] == 1
+    assert plans.normalise_options({"lanes": 3})["lanes"] == 3
+    assert plans.normalise_options({"lanes": 99})["lanes"] == plans.MAX_LANES
+    assert plans.normalise_options({"lanes": 0})["lanes"] == 1
+    assert plans.normalise_options({"lanes": "x"})["lanes"] == 1
+    for text, n in (("J1 to hr; J2 to hr; J3 to hr, 3 at a time", 3), ("J1 to hr; J2 to hr in 2 lanes", 2),
+                    ("parallel 4: J1 to hr; J2 to cfs", 4), ("J1 to hr, J2 to hr 2 in parallel", 2), ("lanes=3 J1 to hr", 3)):
+        r = grammar.parse(text)
+        assert r["options"].get("lanes") == n, text
+        assert not r["warnings"], (text, r["warnings"])
+    r = grammar.parse("J1 (ex22) to hr then nl; J24 to hr")
+    assert r["options"] == {} and [s["project"] for s in r["steps"]] == ["J1", "J1", "J24"]
+
+
+def test_lanes_run_projects_at_once_and_keep_each_projects_order(fake_hub, tmp_path):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    steps = []
+    for p in ("A", "B", "C"):
+        steps += [{"project": p, "module": "steltic", "tab": "slow", "fields": {}},
+                  {"project": p, "module": "steltic_nonlinear", "tab": "run", "fields": {}}]
+    plan = plans.new_plan("lanes", steps, options={"lanes": 3})
+    ex.store.save(plan)
+    n0 = len(log)
+    ex.start(plan["id"])
+    deadline = time.time() + 10
+    while time.time() < deadline and len(ex.current_runs(plan["id"])) < 3:
+        time.sleep(0.02)
+    assert len(ex.current_runs(plan["id"])) == 3           # three slow runs in flight together
+    p = _wait(ex, plan["id"])
+    assert p["status"] == "done" and all(s["status"] == "done" for s in p["steps"])
+    assert sorted({s["lane"] for s in p["steps"]}) == [1, 2, 3]
+    by = {}
+    for s in p["steps"]:
+        by.setdefault(s["project"], []).append(s)
+    for proj, (slow, nl) in by.items():                     # each project's steps in order, in one lane
+        assert slow["lane"] == nl["lane"] and nl["started"] >= slow["ended"] - 0.01, proj
+    starts = sorted(s["started"] for s in p["steps"] if s["tab"] == "slow")
+    assert starts[-1] - starts[0] < 1.0                     # started together, not one after another (each takes ~2 s)
+    sent = log[n0:]
+    for proj in "ABC":
+        assert [e["tab"] for e in sent if e["job"] == proj] == ["slow", "run"]
+
+
+def test_lanes_stop_cancels_every_lane_and_resume_finishes_them(fake_hub, tmp_path):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    steps = [{"project": p, "module": "steltic", "tab": "slow", "fields": {}} for p in ("A", "B", "C")]
+    plan = plans.new_plan("lanes-stop", steps, options={"lanes": 2})
+    ex.store.save(plan); ex.start(plan["id"])
+    deadline = time.time() + 10
+    while time.time() < deadline and len(ex.current_runs(plan["id"])) < 2:
+        time.sleep(0.02)
+    assert len(ex.current_runs(plan["id"])) == 2            # two lanes: A and B, C waits
+    ex.stop(plan["id"])
+    p = _wait(ex, plan["id"])
+    assert p["status"] == "stopped"
+    assert sorted(s["status"] for s in p["steps"]) == ["pending", "stopped", "stopped"]
+    ex.start(plan["id"]); p = _wait(ex, plan["id"])
+    assert p["status"] == "done" and all(s["status"] == "done" for s in p["steps"])
+
+
+def test_lanes_failure_policy(fake_hub, tmp_path):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    # on_fail = stop: the step in the other lane finishes, no new project starts
+    plan = plans.new_plan("lanes-fail", [
+        {"project": "A", "module": "steltic", "tab": "fail", "fields": {}, "on_fail": "stop"},
+        {"project": "B", "module": "steltic", "tab": "slow", "fields": {}},
+        {"project": "C", "module": "steltic_nonlinear", "tab": "run", "fields": {}}], options={"lanes": 2})
+    ex.store.save(plan); ex.start(plan["id"]); p = _wait(ex, plan["id"])
+    assert [s["status"] for s in p["steps"]] == ["failed", "done", "pending"]
+    assert p["status"] == "failed" and "boom" in p["note"]
+    # skip_project: the rest of that project is skipped, the other projects carry on
+    plan = plans.new_plan("lanes-skip", [
+        {"project": "A", "module": "steltic", "tab": "fail", "fields": {}, "on_fail": "skip_project"},
+        {"project": "A", "module": "steltic_nonlinear", "tab": "run", "fields": {}},
+        {"project": "B", "module": "steltic_nonlinear", "tab": "run", "fields": {}},
+        {"project": "C", "module": "steltic_nonlinear", "tab": "run", "fields": {}}], options={"lanes": 2})
+    ex.store.save(plan); ex.start(plan["id"]); p = _wait(ex, plan["id"])
+    assert [s["status"] for s in p["steps"]] == ["failed", "skipped", "done", "done"]
+    assert p["status"] == "failed"
+
+
+def test_lanes_validation_warnings(fake_hub, tmp_path):
+    hub, log = fake_hub
+    ex, jobs = _executor(tmp_path, hub)
+    one = plans.new_plan("one", [{"project": "A", "module": "steltic_nonlinear", "tab": "run", "fields": {}},
+                                 {"project": "A", "module": "steltic_nonlinear", "tab": "run", "fields": {}}], options={"lanes": 3})
+    errors, warnings = ex.validate(one)
+    assert not errors and any("one project" in w for w in warnings)

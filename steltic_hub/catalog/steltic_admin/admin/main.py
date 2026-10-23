@@ -114,14 +114,15 @@ async def plan_parse(request: Request):
     body = await request.json()
     text = str(body.get("text") or "")
     r = grammar.parse(text)
-    plan = plans.new_plan(_title(text), r["steps"], source=text)
+    plan = plans.new_plan(_title(text), r["steps"], source=text, options=r.get("options"))
     errors, warnings = executor.validate(plan) if r["steps"] else (["nothing to run -- name a project and a module, e.g. J1 to hr then nl"], [])
     return {"plan": plan, "warnings": r["warnings"] + warnings, "errors": errors}
 
 
 PLAN_SYSTEM = """You turn a structural engineer's instruction into a batch plan for the Steltic hub. Reply with JSON only:
 {"steps": [{"project": "<name>", "module": "<module id>", "tab": "<tab id>", "fields": {...}}], "notes": ["..."]}
-Rules: steps run in the order given, one at a time. Use only the modules and tabs listed, and only their fields.
+Rules: list the steps in the order given (Admin runs them one at a time, or several projects at once when the
+instruction says so -- that is Admin's own setting, not yours). Use only the modules and tabs listed, and only their fields.
 Project names are letters, digits, _ and -. A design tab's "brief" field may be "@project" (the brief.md in the
 project folder), "@example:<id>" (an example brief such as ex22) or "@file:<name>" (a file in the project folder),
 or the literal brief text if the user wrote it. Do not invent field values the user did not give; leave a field out
@@ -145,7 +146,8 @@ async def plan_parse_llm(request: Request):
     except Exception as e:
         raise HTTPException(502, f"the model did not return a plan: {e}")
     steps = [s for s in (d.get("steps") or []) if isinstance(s, dict)]
-    plan = plans.new_plan(_title(text), steps, source=text)
+    lanes, _ = grammar.lanes_in(text)
+    plan = plans.new_plan(_title(text), steps, source=text, options={"lanes": lanes} if lanes else None)
     errors, warnings = executor.validate(plan)
     return {"plan": plan, "warnings": [str(n) for n in (d.get("notes") or [])] + warnings, "errors": errors}
 
@@ -176,6 +178,7 @@ def plans_get(plan_id: str):
     plan = _load(plan_id)
     plan["running"] = executor.running == plan_id
     plan["current_run"] = executor.current_run(plan_id)
+    plan["current_runs"] = executor.current_runs(plan_id)
     return plan
 
 
