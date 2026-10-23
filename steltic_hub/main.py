@@ -515,6 +515,11 @@ async def clear_connection():
 
 
 # ---------------------------------------------------------------- runs
+def _ticked(v) -> bool:
+    """A checkbox value as the page, Admin's batch or a script sends it (the same reading as flag-if-true)."""
+    return v is True or str(v).strip().lower() in ("true", "1", "yes", "on")
+
+
 @app.post("/api/run/{mod_id}/{tab_id}")
 async def run(mod_id: str, tab_id: str, request: Request):
     try:
@@ -577,6 +582,10 @@ async def run(mod_id: str, tab_id: str, request: Request):
             present = jobs.resolve_in_job(job, q["path"]).exists()
         except (PermissionError, OSError):
             present = False
+        # ...unless the manifest lets a tick box waive it and the user ticked it: the run goes ahead and
+        # the module gets the box's flag, so it can say in its reports that the step was skipped on purpose.
+        if not present and q.get("waive") and _ticked(fields.get(q["waive"])):
+            continue
         if not present:
             return _sse_error((q.get("missing") or "").strip()
                               or f"{tab.title} needs {q['path']} in the project first.")

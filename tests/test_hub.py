@@ -1416,3 +1416,45 @@ def test_api_run_refuses_until_the_required_file_exists(monkeypatch, tmp_path):
         # the other button on the tab is not gated -- it is the step that opens the gate
         body2 = c.post("/api/run/steltic_nonlinear/run", json={"job": "Gate1", "fields": {"package": "x.zip"}, "action": "collect"}).text
         assert "Collect specification values first" not in body2
+
+
+def test_a_required_file_may_be_waived_by_a_tick_box():
+    """`run.requires[].waive`: a checkbox field of the tab that opens the gate when ticked (the Nonlinear
+    tab's "Do not collect specification values now")."""
+    srv = {"command": ["-m", "x"], "health": "/healthz"}
+    box = {"id": "skip", "type": "checkbox", "label": "Skip", "arg": "--skip", "arg_style": "flag-if-true"}
+    def mk(req, fields):
+        return {"schema": 1, "id": "x", "name": "X", "env": {"python": "3.12", "install": []}, "server": srv,
+                "tabs": [{"id": "go", "kind": "form", "fields": fields,
+                          "run": {"kind": "cli", "command": ["-m", "x"], "requires": req}}]}
+    m = Manifest.parse(mk([{"path": "p.json", "missing": "Collect first.", "waive": "skip"}], [box]), "t")
+    assert m.to_json()["tabs"][0]["run"]["requires"] == [{"path": "p.json", "missing": "Collect first.", "waive": "skip"}]
+    for req, fields in (([{"path": "p.json", "waive": "nope"}], [box]),                                  # no such field
+                        ([{"path": "p.json", "waive": "skip"}], [dict(box, type="text")]),               # not a checkbox
+                        ([{"path": "p.json", "waive": 3}], [box])):
+        with pytest.raises(ManifestError):
+            Manifest.parse(mk(req, fields), "t")
+
+
+def test_api_run_opens_the_nonlinear_gate_when_the_user_opts_out_of_collect(monkeypatch, tmp_path):
+    from steltic_hub import main as M, envs, runners
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(config, "JOBS_DIR", tmp_path)
+    monkeypatch.setattr(M.REG, "is_installed", lambda mid: True)
+    monkeypatch.setattr(envs, "optional_present", lambda m_, g: True)
+    started = {}
+
+    async def fake_cli(m, tab, job, fields, *a, **k):
+        from steltic_hub.runners import build_ctx, cli_args
+        started["args"] = cli_args(tab, fields, build_ctx(m, job, fields, M.REG, tab=tab))
+        yield 'data: {"type": "done", "ok": true, "rc": 0}\n\n'
+    monkeypatch.setattr(M, "run_cli", fake_cli)
+    with TestClient(M.app) as c:
+        for v in (False, "false", None):
+            body = c.post("/api/run/steltic_nonlinear/run", json={"job": "Gate2", "fields": {"no_collect": v}}).text
+            assert "Collect specification values first" in body
+        for v in (True, "true", "on"):
+            started.clear()
+            body = c.post("/api/run/steltic_nonlinear/run", json={"job": "Gate2", "fields": {"no_collect": v}}).text
+            assert "Collect specification values first" not in body, body
+            assert "--no-collect" in started["args"]

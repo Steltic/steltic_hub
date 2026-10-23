@@ -297,6 +297,10 @@ function renderForm(body, m, t) {
     else fs.mem[f.id] = v;
   };
 
+  // A tick box that waives one of the run's `requires` (manifest `waive`) is drawn in the gate notice,
+  // beside the sentence it answers, and only while that file is missing -- not among the other fields.
+  const waiveIds = new Set(((t.run && t.run.requires) || []).map(q => q.waive).filter(Boolean));
+  const waiveNodes = {};
   for (const f of t.fields) {
     if (f.type === 'project') {
       vals[f.id] = S.project;
@@ -308,6 +312,10 @@ function renderForm(body, m, t) {
     else init = fs.mem[f.id] !== undefined ? fs.mem[f.id] : (f.type === 'attachments' ? [] : '');
     if (f.fills) init = '';                                  // a "load an example" select never sticks
     vals[f.id] = init;
+    if (waiveIds.has(f.id)) {
+      waiveNodes[f.id] = fieldNode(f, init, v => { remember(f, v); paint(); }, m, t, fieldApi);
+      continue;
+    }
     rows.push(fieldNode(f, init, v => remember(f, v), m, t, fieldApi));
   }
   // group short fields into rows of up to three
@@ -342,18 +350,28 @@ function renderForm(body, m, t) {
     } catch (e) { gate.missing = gate.need.slice(); }
     gate.checked = true; paint();
   };
+  const waived = q => !!(q.waive && vals[q.waive] === true);
   const paint = () => {
     const r = S.runs[key];
     status.className = 'status ' + ({ running: '', done: 'ok', failed: 'bad', cancelled: 'bad', paused: 'warn' }[r.status] || '');
     status.textContent = r.statusText || '';
-    const closed = gate.need.length > 0 && (!gate.checked || gate.missing.length > 0);
+    const blocking = gate.missing.filter(q => !waived(q));
+    const closed = gate.need.length > 0 && (!gate.checked || blocking.length > 0);
     runBtn.disabled = r.status === 'running' || unmet.length > 0 || closed;
-    runBtn.title = closed && gate.checked ? gate.missing.map(q => q.missing || ('needs ' + q.path)).join('\n') : '';
-    gateNote.style.display = closed && gate.checked ? '' : 'none';
-    if (closed && gate.checked) {
+    runBtn.title = closed && gate.checked ? blocking.map(q => q.missing || ('needs ' + q.path)).join('\n') : '';
+    const showNote = gate.checked && gate.missing.length > 0;
+    gateNote.style.display = showNote ? '' : 'none';
+    if (showNote) {
       gateNote.innerHTML = '';
-      gateNote.append(el('b', {}, ((t.run && t.run.label) || 'Run') + ' is closed — '),
-        gate.missing.map(q => q.missing || ('the project has no ' + q.path + ' yet')).join(' '));
+      const label = (t.run && t.run.label) || 'Run';
+      if (blocking.length)
+        gateNote.append(el('b', {}, label + ' is closed — '),
+          blocking.map(q => q.missing || ('the project has no ' + q.path + ' yet')).join(' '));
+      else
+        gateNote.append(el('b', {}, label + ' is open without it — '),
+          'you chose to run without ' + gate.missing.map(q => q.path).join(', ') + '; the reports will say so.');
+      // the tick boxes that waive a missing file, right under the sentence they answer
+      for (const q of gate.missing) if (q.waive && waiveNodes[q.waive]) gateNote.append(waiveNodes[q.waive]);
     }
     // a run on this tab just ended: whatever it wrote may have opened the gate
     if (gate.need.length && gate.lastStatus === 'running' && r.status !== 'running') setTimeout(checkGate, 300);
@@ -374,7 +392,10 @@ function renderForm(body, m, t) {
       if (!S.project) { status.className = 'status bad'; status.textContent = 'Pick or create a project first'; return; }
       // a design agent's http run, or a CLI run the manifest marks llm, is a conversation with the user's model
       if (((m.wants_credentials && t.run.kind === 'http') || t.run.llm) && !S.conn) { openConnection(); return; }
-      startRun(m, t, key, { ...vals }, paint, fieldApi);
+      // a waiver only means something while its file is missing: never send it once the file is there
+      const send = { ...vals };
+      for (const q of gate.need) if (q.waive && !gate.missing.includes(q)) send[q.waive] = false;
+      startRun(m, t, key, send, paint, fieldApi);
     };
     stopBtn.onclick = async () => {
       const r = S.runs[key];

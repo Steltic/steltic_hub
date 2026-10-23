@@ -160,6 +160,10 @@ class Run:
     # the Nonlinear Run tab will not run the analyses until Collect specification values has written
     # the parameter file, because an analysis on placeholders is what produced the UNVERIFIED reports.
     # Paths are relative to the project folder; the UI greys the button, /api/run refuses the start.
+    # An entry may name a checkbox field of the tab as `waive`: ticking it opens the gate anyway and the
+    # module gets that field's flag -- the user chose to go without the file, and the module reports so.
+    # The Nonlinear Run tab's "Do not collect specification values now" (--no-collect) is the case: no
+    # standards corpus on the PC, and reports that come back marked UNVERIFIED rather than no run at all.
     requires: list = field(default_factory=list)
 
     @staticmethod
@@ -207,6 +211,8 @@ class Run:
                 raise ManifestError(f"run.requires path must be inside the project folder: {q['path']!r}")
             if not isinstance(q.get("missing", ""), str):
                 raise ManifestError(f"run.requires {q['path']!r}: `missing` must be the sentence shown while it is absent")
+            if not isinstance(q.get("waive", ""), str):
+                raise ManifestError(f"run.requires {q['path']!r}: `waive` must be the id of a checkbox field")
         r.retry = _parse_retry(r.retry)
         if r.retry and r.kind != "cli":
             # Only run_cli owns the process it would have to spawn again; a retry asked for anywhere
@@ -278,6 +284,10 @@ class Tab:
         if len(ids) != len(set(ids)):
             raise ManifestError(f"tab {t.id}: duplicate field ids")
         t.run = Run.parse(d["run"]) if d.get("run") else None
+        for q in (t.run.requires if t.run else []):
+            w = q.get("waive")
+            if w and not any(f.id == w and f.type == "checkbox" for f in t.fields):
+                raise ManifestError(f"tab {t.id}: run.requires {q['path']!r} is waived by {w!r}, which is not a checkbox field of the tab")
         for f in t.fields:
             if f.fills and f.fills.get("target") and f.fills["target"] not in ids:
                 raise ManifestError(f"tab {t.id}: field {f.id} fills unknown field {f.fills['target']!r}")
@@ -458,7 +468,8 @@ class Manifest:
                 "blurb": t.blurb, "artifacts": t.artifacts, "links": t.links,
                 "run": ({"kind": t.run.kind, "label": t.run.label, "llm": bool(t.run.llm),
                          "continues": t.run.continues or None,
-                         "requires": [{"path": q["path"], "missing": q.get("missing") or ""} for q in t.run.requires],
+                         "requires": [{"path": q["path"], "missing": q.get("missing") or "",
+                                       **({"waive": q["waive"]} if q.get("waive") else {})} for q in t.run.requires],
                          "can_cancel": t.run.kind == "cli" or bool(t.run.cancel)} if t.run else None),
                 "actions": [{"id": a.id, "label": a.label, "info": a.info, "kind": a.run.kind,
                              "llm": bool(a.run.llm), "fields": list(a.fields),
