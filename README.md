@@ -494,6 +494,52 @@ run history as a click on those buttons. Nothing is modelled or analysed by the 
 UNVERIFIED and say the values were not collected.
 `tests/test_userbuilding.py`.
 
+**OpenSees models.** The page also takes an OpenSees model: a Tcl script (`.tcl`), an OpenSeesPy script (`.py`),
+or a `.zip` of the model folder when the main script sources / imports other files (the main script is the one no
+other script refers to, or the one chosen on the page). `userbuilding/opensees/` turns it into HR's building
+description, which goes to the same build-only intake as a JSON description:
+
+* `record.py` runs the script as written, in a scratch copy of its folder, in a separate interpreter -- OpenSeesPy
+  under the Nonlinear module's Python (numpy, scipy, matplotlib), Tcl under a Python with Tcl (tkinter) -- against a
+  recorder that stands in for OpenSees. Model commands are recorded (nodes, masses, fixes, materials, fibre sections
+  with their patches / layers, transformations, elements, rigid diaphragms, equalDOF / rigidLink, load patterns);
+  analysis commands answer as a converged analysis would, so the script's loops end, and nothing is analysed. A
+  script that wipes and rebuilds keeps the largest model; one that stops part-way (a missing ground-motion file)
+  still yields the model it built, and the page says where it stopped. The opsvis / vfo / opstool helpers are
+  stand-ins. An OpenSeesPy script is ordinary Python and runs with your rights, like running it yourself.
+* `convert.py` reads the building from the record. Units come from the steel modulus (29,000 ksi / 200 GPa in
+  kip-in, kip-ft, lb-in, lb-ft, kN-m, N-m, N-mm, kN-mm, kN-cm, tf-m or kgf-cm) or are chosen on the page; the
+  vertical axis (Z or Y) from the rigid diaphragms, the supports and the gravity loads, or chosen. Subdivided
+  members, rigid end offsets, panel-zone and spring nodes collapse into work points; levels and grid lines come
+  from the long horizontal and vertical members; columns break at the joints, beams and braces are chained through
+  their intermediate nodes. End releases come from `-releasey/-releasez` and from connectors (equalDOF,
+  rigidLink bar, zeroLength with a free or negligible rotational stiffness); a rotational spring with real stiffness
+  (an IMK hinge) is a moment connection -- the Nonlinear module builds its own hinges from AISC 342 and never uses
+  the script's springs, fibres or materials. Each distinct member property set is matched to an AISC shape on A,
+  Ix and Iy (and d, bf, tf, tw for a fibre I-section) within 3 % and clear of the runner-up; the match comes back as
+  a proposal to accept, otherwise you give the shape. Masses become the seismic weight W (your own result, for the
+  confirmation check) and a proposed dead load per level. Shells, solids, isolators, skewed column axes and anything
+  else outside version 1 are refused with the reason. The conversion report is shown in step 1 and kept in
+  `<project>/userbuilding/opensees/` with the scripts as run, the record and the script's own output.
+  `tests/test_userbuilding_opensees.py`; the fixtures are in `tests/fixtures/opensees/`.
+
+**Typing the building.** Step 1 also has a text box (`userbuilding/describe.py`). Pasted OpenSees code (Tcl or
+OpenSeesPy) is saved as a script and read exactly as an upload. A description in plain words ("4 stories, 15 ft then
+13 ft; grid 1-5 at 30 ft, A-D at 25 ft; W14X132 columns in stories 1-2 and W14X90 above, strong axis in X; moment
+frames on A and D with W24X76 beams, all other beams W18X35 on shear tabs; chevron HSS8X8X1/2 braces on 1 and 5
+between B and C; rigid diaphragm, fixed bases; SDS 1.0 ...") is read with the hub's model connection -- the module
+declares `credentials`, so the hub pushes the same connection it gives Admin and Design variations -- into a small
+spec: the grid, the stories, member groups (a later group overrides an earlier one; `omit` removes members for
+setbacks and openings), brace patterns (chevron, V, X, single diagonal, two-story X, eccentric with a link length,
+buckling-restrained by core area) and the design basis. The model never decides the structure: what the words do not
+settle -- a section, whether beams are moment-connected or pinned, which way the columns face, a span or a story --
+comes back as a list to add to the text, and nothing is built until it is there. The spec is then written as an
+OpenSeesPy script (kip-in, Z up, the AISC table's own properties for the named shapes; downloadable from step 1) and
+the OpenSees interpreter reads it like any upload; the members keep the names the text gives, the grid lines and
+levels the text's labels. Basis values (SDS, site class, loads, systems, grades) go to HR as proposals to accept,
+each quoting the words it came from, and a value whose quote is not in the text is not taken. Without a model
+connection the page says so; the file upload and pasted code need none.
+
 ## Admin
 
 A bundled module (`catalog/steltic_admin/`; fastapi + uvicorn + httpx in its own venv) that runs
