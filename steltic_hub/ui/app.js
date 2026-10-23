@@ -297,6 +297,10 @@ function renderForm(body, m, t) {
     else fs.mem[f.id] = v;
   };
 
+  // A tick box that waives one of the run's `requires` (manifest `waive`) is drawn in the gate notice,
+  // beside the sentence it answers, and only while that file is missing -- not among the other fields.
+  const waiveIds = new Set(((t.run && t.run.requires) || []).map(q => q.waive).filter(Boolean));
+  const waiveNodes = {};
   for (const f of t.fields) {
     if (f.type === 'project') {
       vals[f.id] = S.project;
@@ -308,6 +312,10 @@ function renderForm(body, m, t) {
     else init = fs.mem[f.id] !== undefined ? fs.mem[f.id] : (f.type === 'attachments' ? [] : '');
     if (f.fills) init = '';                                  // a "load an example" select never sticks
     vals[f.id] = init;
+    if (waiveIds.has(f.id)) {
+      waiveNodes[f.id] = fieldNode(f, init, v => { remember(f, v); paint(); }, m, t, fieldApi);
+      continue;
+    }
     rows.push(fieldNode(f, init, v => remember(f, v), m, t, fieldApi));
   }
   // group short fields into rows of up to three
@@ -342,18 +350,28 @@ function renderForm(body, m, t) {
     } catch (e) { gate.missing = gate.need.slice(); }
     gate.checked = true; paint();
   };
+  const waived = q => !!(q.waive && vals[q.waive] === true);
   const paint = () => {
     const r = S.runs[key];
     status.className = 'status ' + ({ running: '', done: 'ok', failed: 'bad', cancelled: 'bad', paused: 'warn' }[r.status] || '');
     status.textContent = r.statusText || '';
-    const closed = gate.need.length > 0 && (!gate.checked || gate.missing.length > 0);
+    const blocking = gate.missing.filter(q => !waived(q));
+    const closed = gate.need.length > 0 && (!gate.checked || blocking.length > 0);
     runBtn.disabled = r.status === 'running' || unmet.length > 0 || closed;
-    runBtn.title = closed && gate.checked ? gate.missing.map(q => q.missing || ('needs ' + q.path)).join('\n') : '';
-    gateNote.style.display = closed && gate.checked ? '' : 'none';
-    if (closed && gate.checked) {
+    runBtn.title = closed && gate.checked ? blocking.map(q => q.missing || ('needs ' + q.path)).join('\n') : '';
+    const showNote = gate.checked && gate.missing.length > 0;
+    gateNote.style.display = showNote ? '' : 'none';
+    if (showNote) {
       gateNote.innerHTML = '';
-      gateNote.append(el('b', {}, ((t.run && t.run.label) || 'Run') + ' is closed — '),
-        gate.missing.map(q => q.missing || ('the project has no ' + q.path + ' yet')).join(' '));
+      const label = (t.run && t.run.label) || 'Run';
+      if (blocking.length)
+        gateNote.append(el('b', {}, label + ' is closed — '),
+          blocking.map(q => q.missing || ('the project has no ' + q.path + ' yet')).join(' '));
+      else
+        gateNote.append(el('b', {}, label + ' is open without it — '),
+          'you chose to run without ' + gate.missing.map(q => q.path).join(', ') + '; the reports will say so.');
+      // the tick boxes that waive a missing file, right under the sentence they answer
+      for (const q of gate.missing) if (q.waive && waiveNodes[q.waive]) gateNote.append(waiveNodes[q.waive]);
     }
     // a run on this tab just ended: whatever it wrote may have opened the gate
     if (gate.need.length && gate.lastStatus === 'running' && r.status !== 'running') setTimeout(checkGate, 300);
@@ -374,7 +392,10 @@ function renderForm(body, m, t) {
       if (!S.project) { status.className = 'status bad'; status.textContent = 'Pick or create a project first'; return; }
       // a design agent's http run, or a CLI run the manifest marks llm, is a conversation with the user's model
       if (((m.wants_credentials && t.run.kind === 'http') || t.run.llm) && !S.conn) { openConnection(); return; }
-      startRun(m, t, key, { ...vals }, paint, fieldApi);
+      // a waiver only means something while its file is missing: never send it once the file is there
+      const send = { ...vals };
+      for (const q of gate.need) if (q.waive && !gate.missing.includes(q)) send[q.waive] = false;
+      startRun(m, t, key, send, paint, fieldApi);
     };
     stopBtn.onclick = async () => {
       const r = S.runs[key];
@@ -954,7 +975,8 @@ function renderModulesPane(body) {
     el('p', { class: 'blurb' },
       'Each module is a git repo with its own private Python environment. Updating pulls the repo ' +
       'and reinstalls into that environment only, so one module can never break another — and a ' +
-      'module that ships a newer steltic_module.json gains its new tabs without updating the hub.'));
+      'module that ships a newer steltic_module.json gains its new tabs without updating the hub. ' +
+      'The hub itself is the first card: check for a newer hub and update it here too.'));
   pane.append(el('div', { class: 'actions', style: 'margin:0 0 18px' },
     el('button', { class: 'ghost', onclick: async e => {
       e.target.textContent = 'reloading…';
@@ -965,6 +987,7 @@ function renderModulesPane(body) {
       'Picks up edits to a manifest without restarting — the edit-test loop for tabs and fields.')));
   if (S.sac === 'on' || S.sac === 'evaluation') pane.append(sacNotice(S.sac));
   const grid = el('div', { class: 'grid' });
+  grid.append(hubCard());                  // the hub itself, updated from here like any module
   for (const m of S.modules) grid.append(moduleCard(m));
   pane.append(grid, el('hr'),
     el('h3', {}, 'Add a module'),
@@ -1114,6 +1137,89 @@ function moduleCard(m) {
     Object.keys(m.optional || {}).length ? optionalSection(m, log) : null,
     log);
   return card;
+}
+
+// The hub's own card on the Modules page: its version and where its code lives, Check for updates, Update
+// and Restart hub. An update changes the code on disk only; the running hub is the old version until it is
+// restarted, so a finished update turns Restart hub into the primary button.
+function hubCard() {
+  const log = S.installLogs.__hub || (S.installLogs.__hub = el('div', { class: 'log' }));
+  const card = el('div', { class: 'card', style: 'border-left:3px solid var(--accent)' });
+  const paint = () => {
+    const h = Object.assign({}, S.hub || {}, S.hubSelf || {});
+    const changed = h.changed || [];
+    const badges = [el('span', { class: 'pill ok' }, 'running'),
+      h.version ? el('span', { class: 'pill' }, 'hub ' + h.version) : null,
+      h.mode ? el('span', { class: 'pill', title: h.mode === 'checkout' ? 'updated with git (fast-forward)' : 'updated with pip' },
+        h.mode === 'checkout' ? 'git checkout' : 'installed package') : null,
+      changed.length ? el('span', { class: 'pill warn', title: changed.join('\n') }, `${changed.length} edited file${changed.length > 1 ? 's' : ''}`) : null,
+      h.stale || S.hubUpdated ? el('span', { class: 'pill warn' }, 'restart to use the new code') : null];
+    const restartPrimary = !!(h.stale || S.hubUpdated);
+    const check = el('button', { class: 'ghost', onclick: async e => {
+      const b = e.target; b.disabled = true; b.textContent = 'checking…';
+      try {
+        const d = await (await fetch('/api/hub/check-update', { cache: 'no-store' })).json();
+        S.hubBehind = !!d.behind;
+        update.className = d.behind && !restartPrimary ? 'primary' : 'ghost';
+        if (d.behind) {
+          b.textContent = `update available (hub ${d.remote_version || d.remote || '?'}${d.behind_n ? ', ' + d.behind_n + ' commit' + (d.behind_n > 1 ? 's' : '') : ''})`;
+          log.innerHTML = '';
+          for (const ln of (d.incoming || [])) log.append(el('div', {}, ln));
+        } else b.textContent = d.reason ? d.reason : `up to date (hub ${d.version || h.version || ''})`;
+      } catch (err) { b.textContent = 'check failed'; }
+      b.disabled = false;
+    } }, 'Check for updates');
+    const update = el('button', { class: S.hubBehind && !restartPrimary ? 'primary' : 'ghost', onclick: async e => {
+      if (changed.length && !await askConfirm('Update the hub',
+        `You have edited ${changed.length} file${changed.length > 1 ? 's' : ''} in the hub's folder (${changed.slice(0, 4).join(', ')}${changed.length > 4 ? ' …' : ''}). ` +
+        'They are put aside with git stash before the update (git stash pop brings them back). Update now?', 'Update')) return;
+      await runHubUpdate(log, e.target);
+    } }, 'Update');
+    const restart = el('button', { class: restartPrimary ? 'primary' : 'ghost', disabled: !(h.restartable),
+      title: 'Stop this hub and start a fresh one on the same port — after an update. A run in progress is stopped.',
+      onclick: () => restartHub() }, 'Restart hub');
+    card.replaceChildren(
+      el('h4', {}, 'Steltic Hub', badges),
+      el('p', { class: 'note' }, 'The app itself — this window, the Modules page, projects and runs — and the modules that ship inside it ' +
+        '(marked bundled), whose code updates with it. Update fetches the newest hub from GitHub; Restart hub then runs it.'),
+      el('p', { class: 'meta', style: 'margin-top:8px' },
+        `${h.mode === 'checkout' ? (h.remote || 'https://github.com/Steltic/steltic_hub') : 'https://github.com/Steltic/steltic_hub'}  ${h.commit || ''}` +
+        (h.branch ? ` (${h.branch})` : '') + (h.source ? ` · ${h.source}` : '')),
+      el('div', { class: 'actions' }, update, check, restart),
+      log);
+  };
+  card._paint = paint;
+  paint();
+  fetch('/api/hub/status', { cache: 'no-store' }).then(r => r.json()).then(d => { S.hubSelf = d; paint(); }).catch(() => {});
+  return card;
+}
+
+async function runHubUpdate(log, btn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = 'updating…';
+  log.innerHTML = '';
+  let ok = false, result = null;
+  await stream('/api/hub/update', { method: 'POST' }, ev => {
+    if (ev.type === 'log') log.append(el('div', {}, ev.text));
+    else if (ev.type === 'error') log.append(el('div', { class: 'e' }, ev.text));
+    else if (ev.type === 'done') { ok = !!ev.ok; result = ev.result || null; }
+    while (log.childNodes.length > 3000) log.removeChild(log.firstChild);
+    log.scrollTop = log.scrollHeight;
+  });
+  btn.disabled = false; btn.textContent = old;
+  if (ok && result && result.restart_needed) {
+    S.hubUpdated = true;
+    log.append(el('div', { class: 'g' }, `updated${result.version ? ' to hub ' + result.version : ''} — press Restart hub to run it`));
+    toast('hub updated — restart it to run the new version', 'ok');
+  } else if (ok) {
+    log.append(el('div', { class: 'g' }, 'already up to date'));
+    toast('the hub is up to date', 'ok');
+  } else {
+    log.append(el('div', { class: 'e' }, 'not updated — see the log above'));
+    toast('hub not updated — see the log', 'bad');
+  }
+  log.scrollTop = log.scrollHeight;
+  try { S.hubSelf = await (await fetch('/api/hub/status', { cache: 'no-store' })).json(); } catch (e) { }
+  if (S.special === 'modules') renderSpecial();
 }
 
 function optionalSection(m, log) {

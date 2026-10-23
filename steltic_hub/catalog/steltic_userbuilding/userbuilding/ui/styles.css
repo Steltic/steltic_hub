@@ -145,3 +145,6 @@ td.title{min-width:220px}
 #modal .mb{padding:14px 16px}
 #modal .mf{padding:10px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
 .kv{font-size:12px;color:var(--dim)} .kv b{color:var(--ink);font-weight:500}
+.optout{display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer;color:var(--ink)}
+.optout input{width:16px;height:16px;flex:none}
+div.small{font-size:12px;color:var(--dim)}

@@ -5,7 +5,15 @@ const qs = new URLSearchParams(location.search);
 const S = {
   project: (qs.get('project') || 'Project').replace(/[^A-Za-z0-9_-]/g, '') || 'Project',
   step: 1, hr: null, intake: null, answers: {}, checks: null, run: null, next: 0, log: [], poll: null,
+  opts: loadOpts(),            // step 5's records / site class / opt-out: kept across the 3-second re-render
 };
+// Step 5's choices live here, not in the inputs: the page re-renders every 3 s while a build or a run is going,
+// and an input rebuilt from its default lost the user's choice (the opt-out box came back ticked for Collect).
+function loadOpts() {
+  const d = { n_records: 11, site_class: 'D', skip_collect: false };
+  try { return Object.assign(d, JSON.parse(localStorage.getItem('steltic.ub.run') || '{}')); } catch (e) { return d; }
+}
+function saveOpts() { try { localStorage.setItem('steltic.ub.run', JSON.stringify(S.opts)); } catch (e) { /* private window */ } }
 const $ = (s, r = document) => r.querySelector(s);
 const enc = encodeURIComponent;
 function el(tag, attrs = {}, ...kids) {
@@ -182,12 +190,15 @@ function step4() {
 // ------------------------------------------------------------------------------------------- 5 run
 function step5() {
   if (!confirmed()) return el('div', { class: 'card' }, 'Confirm the model first (step 4).');
-  const nrec = el('input', { type: 'number', value: 11, min: 1 });
-  const site = el('select', {}, ['A', 'B', 'C', 'D', 'E'].map(x => el('option', { value: x, selected: x === 'D' }, x)));
-  const col = el('input', { type: 'checkbox', checked: true });
+  const o = S.opts;
+  const nrec = el('input', { type: 'number', value: o.n_records, min: 1, onchange: () => { o.n_records = parseInt(nrec.value || '11', 10); saveOpts(); } });
+  const site = el('select', { onchange: () => { o.site_class = site.value; saveOpts(); } },
+    ['A', 'B', 'C', 'D', 'E'].map(x => el('option', { value: x, selected: x === o.site_class }, x)));
+  const collected = !!(S.run && S.run.collected);
+  const skip = el('input', { type: 'checkbox', checked: !!o.skip_collect, onchange: () => { o.skip_collect = skip.checked; saveOpts(); render(); } });
   const running = S.run && S.run.state === 'running';
   const go = el('button', { class: 'primary', disabled: running, onclick: async () => {
-    try { await api(`${P()}/run`, { method: 'POST', body: { n_records: parseInt(nrec.value || '11', 10), site_class: site.value, collect: col.checked } });
+    try { await api(`${P()}/run`, { method: 'POST', body: { n_records: o.n_records, site_class: o.site_class, skip_collect: !!o.skip_collect } });
       toast('Started through the hub'); S.log = []; S.next = 0; startPoll(); await refresh(); render(); } catch (e) { toast(e.message, 'bad'); } } }, 'Run the full suite');
   const stop = el('button', { class: 'danger', disabled: !running, onclick: async () => { await api(`${P()}/stop`, { method: 'POST' }); toast('Stopping…'); } }, 'Stop');
   const log = el('div', { class: 'log' }, (S.log || []).slice(-600).map(e => el('div', { class: 'l' + (e.type === 'error' ? ' err' : '') }, `[${e.phase}] ${e.text}`)));
@@ -195,11 +206,17 @@ function step5() {
   return el('div', {},
     el('h2', {}, 'Run the nonlinear suite'),
     el('p', { class: 'lead' }, 'Through the hub, exactly as the Nonlinear module\'s own buttons: Collect specification values (the component parameters from the standards), then Run analyses — pushover, NLRHA, DDM, the four-analyses sheet and the 16.1.4 design criteria. The hub copies HR\'s package (with provenance.json and nl_basis.json) into this project first.'),
-    el('div', { class: 'card' }, el('div', { class: 'row' }, el('label', { class: 'kv' }, 'Records ', nrec), el('label', { class: 'kv' }, 'Site class ', site),
-      el('label', { class: 'kv' }, col, ' collect specification values first'), go, stop),
+    el('div', { class: 'card' },
+      el('div', { class: 'row' }, el('label', { class: 'kv' }, 'Records ', nrec), el('label', { class: 'kv' }, 'Site class ', site), go, stop),
+      el('label', { class: 'kv optout' }, skip, ' Do not collect specification values now — specification checks in the report will come back marked UNVERIFIED'),
+      el('div', { class: 'small', style: 'margin-top:4px' }, o.skip_collect
+        ? 'Collect is skipped and the analyses run on the repository placeholder parameters. For a PC without a standards corpus, or if you prefer not to add one; every report says the values were not collected.'
+        : (collected ? 'Collect runs again first (this project already has collected values; they are replaced).'
+                     : 'Collect runs first and reads the values from the standards corpus on this PC; if a group cannot be read, the run stops there.')),
       S.run && S.run.state && S.run.state !== 'none' ? el('div', { class: 'kv', style: 'margin-top:8px' }, `state: ${S.run.state}${S.run.phase ? ' · ' + S.run.phase : ''}${S.run.error ? ' · ' + S.run.error : ''}`) : null),
     log,
-    S.run && S.run.state === 'done' ? el('p', { class: 'kv', style: 'margin-top:8px' }, 'Results are in this project: open the Nonlinear module\'s Viewers and Files tabs (four_analyses.html, the reports, the 16.1.4 document).') : null);
+    S.run && S.run.state === 'done' ? el('p', { class: 'kv', style: 'margin-top:8px' }, 'Results are in this project: open the Nonlinear module\'s Viewers and Files tabs (four_analyses.html, the reports, the 16.1.4 document).' +
+      (S.run.collect === false ? ' Specification values were not collected for this run: the reports are marked UNVERIFIED.' : '')) : null);
 }
 
 // ------------------------------------------------------------------------------------------- polling

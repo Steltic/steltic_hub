@@ -65,7 +65,7 @@
       "id": "run",
       "title": "Run",
       "kind": "form",
-      "blurb": "Collect specification values first, then Run analyses: three engines in sequence, each in its own process (openseespy is a process singleton), on the component parameters collected from the standards. The design package is copied into this project folder first, so every output lands beside it. Typical times on two cores: pushover 5–15 min, NLRHA 30–90 min, DDM 30–70 min. The §16.1.4 design criteria draft is refreshed at the end of every run.",
+      "blurb": "Collect specification values first, then Run analyses: three engines in sequence, each in its own process (openseespy is a process singleton), on the component parameters collected from the standards. No standards corpus on this PC, or you prefer not to add one? Tick “Do not collect specification values now” under the button and the analyses run on the repository placeholders — every report then says the specification checks are UNVERIFIED because the values were not collected. The design package is copied into this project folder first, so every output lands beside it. Typical times on two cores: pushover 5–15 min, NLRHA 30–90 min, DDM 30–70 min. The §16.1.4 design criteria draft is refreshed at the end of every run.",
       "run": {
         "kind": "cli",
         "cwd": "{job_dir}",
@@ -97,6 +97,7 @@
               "hinge_params*.json",
               "collect_evidence.json",
               "collect_transcript.jsonl",
+              "spec_values_not_collected.json",
               "_collect_model",
               "review.html",
               "review.md",
@@ -123,7 +124,8 @@
         "requires": [
           {
             "path": "hinge_params_collected.json",
-            "missing": "Collect specification values first. The analyses run on the component parameters that step reads out of the standards, and their reports cite them; on the repository placeholders every clause would come back marked UNVERIFIED."
+            "missing": "Collect specification values first. The analyses run on the component parameters that step reads out of the standards, and their reports cite them; on the repository placeholders every clause would come back marked UNVERIFIED.",
+            "waive": "no_collect"
           }
         ]
       },
@@ -151,6 +153,14 @@
           "arg": "--params",
           "help": "Leave as is: the analyses use the file Collect specification values wrote for this project. Choose a file only to override it with your own job copy of hinge_params.json.",
           "placeholder": "hinge_params_collected.json (from Collect specification values, automatic)"
+        },
+        {
+          "id": "no_collect",
+          "type": "checkbox",
+          "label": "Do not collect specification values now — specification checks in the report will come back marked UNVERIFIED",
+          "arg": "--no-collect",
+          "arg_style": "flag-if-true",
+          "help": "For a PC without a standards corpus, or if you prefer not to add one. The analyses run on the repository placeholder parameters and every report says the values were not collected. Collect specification values and run again at any time to have them read from the standards and cited."
         },
         {
           "id": "only",
@@ -476,7 +486,7 @@
             "job",
             "package"
           ],
-          "info": "Do this first. It reads the component modelling parameters the analyses need — the hinge backbones, the acceptance criteria, the expected material — out of the standards on this PC (AISC 342-22, ASCE 41-23, AISC 341-22) with the same searches the Review makes, checks every value, and writes hinge_params_collected.json into the project. Run analyses opens once that file exists and then runs on those cited values, so its reports carry the citations from the start. A group the corpus cannot answer is named and Run analyses stays closed.",
+          "info": "Do this first. It reads the component modelling parameters the analyses need — the hinge backbones, the acceptance criteria, the expected material — out of the standards on this PC (AISC 342-22, ASCE 41-23, AISC 341-22) with the same searches the Review makes, checks every value, and writes hinge_params_collected.json into the project. Run analyses opens once that file exists and then runs on those cited values, so its reports carry the citations from the start. A group the corpus cannot answer is named and Run analyses stays closed — unless you tick “Do not collect specification values now”, which runs the analyses without them (reports marked UNVERIFIED).",
           "run": {
             "kind": "cli",
             "cwd": "{job_dir}",
@@ -512,6 +522,7 @@
                   "hinge_params*.json",
                   "collect_evidence.json",
                   "collect_transcript.jsonl",
+                  "spec_values_not_collected.json",
                   "_collect_model",
                   "review.html",
                   "review.md",
