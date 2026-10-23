@@ -133,6 +133,22 @@ and reports on `/healthz` whether any of its source files (package, UI, bundled 
 
 The self-test exercises the in-place restart (step 6b).
 
+### Updating the hub from the Modules page
+
+The first card on the Modules page is the hub itself: its version, where its code lives, and the same
+**Check for updates** / **Update** buttons every module has, plus **Restart hub**
+(`steltic_hub/selfupdate.py`; routes `GET /api/hub/status`, `GET /api/hub/check-update`, `POST /api/hub/update`).
+
+- **A git checkout** (the usual install): `git fetch` the branch, then a fast-forward to it. The folder is yours, so
+  nothing is thrown away: tracked files you edited are put aside with `git stash` first (`git stash pop` brings them
+  back), untracked files are left alone, and a checkout with commits of its own is refused with the reason (update
+  that one with git). When the update changed `pyproject.toml` the hub environment is refreshed
+  (`uv pip install -e .`), and an installed bundled module whose `requirements.txt` / `pyproject.toml` changed has
+  its environment rebuilt.
+- **An installed package** (no checkout): `uv pip install --upgrade` from the GitHub repo.
+
+The running hub is still the old code afterwards; **Restart hub** (`POST /api/hub/restart`) starts the new one.
+
 ### Only the hub's own page may drive it
 
 The hub binds to 127.0.0.1 with no authentication, which keeps other machines out but not other web
@@ -472,7 +488,10 @@ questions (key items have no default; proposed defaults are used only once accep
 version 1), has HR build the model exactly as given, shows the 3-D model beside the Nonlinear module's confirmation
 checks (`snl confirm`; the user's own T1 / V / W are compared as warnings only), and after the confirmation starts
 the Nonlinear module's Collect specification values and Run analyses through the hub -- the same staging, gates and
-run history as a click on those buttons. Nothing is modelled or analysed by the module itself.
+run history as a click on those buttons. Nothing is modelled or analysed by the module itself. Its tick box
+*Do not collect specification values now* skips Collect and sends the Nonlinear Run tab's own opt-out
+(`no_collect`, which waives that tab's `requires` gate and passes `--no-collect`): the reports come back marked
+UNVERIFIED and say the values were not collected.
 `tests/test_userbuilding.py`.
 
 ## Admin

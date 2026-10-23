@@ -3,8 +3,8 @@ message: "If you use this software, please cite it as below."
 title: "Steltic Hub: one local app over the Steltic steel design modules"
 authors:
   - name: "Steltic"
-version: "0.2.2"
-date-released: "2026-10-12"
+version: "0.2.3"
+date-released: "2026-10-23"
 license: MIT
 repository-code: "https://github.com/Steltic/steltic_hub"
 url: "https://stelticai.com"

@@ -975,7 +975,8 @@ function renderModulesPane(body) {
     el('p', { class: 'blurb' },
       'Each module is a git repo with its own private Python environment. Updating pulls the repo ' +
       'and reinstalls into that environment only, so one module can never break another — and a ' +
-      'module that ships a newer steltic_module.json gains its new tabs without updating the hub.'));
+      'module that ships a newer steltic_module.json gains its new tabs without updating the hub. ' +
+      'The hub itself is the first card: check for a newer hub and update it here too.'));
   pane.append(el('div', { class: 'actions', style: 'margin:0 0 18px' },
     el('button', { class: 'ghost', onclick: async e => {
       e.target.textContent = 'reloading…';
@@ -986,6 +987,7 @@ function renderModulesPane(body) {
       'Picks up edits to a manifest without restarting — the edit-test loop for tabs and fields.')));
   if (S.sac === 'on' || S.sac === 'evaluation') pane.append(sacNotice(S.sac));
   const grid = el('div', { class: 'grid' });
+  grid.append(hubCard());                  // the hub itself, updated from here like any module
   for (const m of S.modules) grid.append(moduleCard(m));
   pane.append(grid, el('hr'),
     el('h3', {}, 'Add a module'),
@@ -1135,6 +1137,89 @@ function moduleCard(m) {
     Object.keys(m.optional || {}).length ? optionalSection(m, log) : null,
     log);
   return card;
+}
+
+// The hub's own card on the Modules page: its version and where its code lives, Check for updates, Update
+// and Restart hub. An update changes the code on disk only; the running hub is the old version until it is
+// restarted, so a finished update turns Restart hub into the primary button.
+function hubCard() {
+  const log = S.installLogs.__hub || (S.installLogs.__hub = el('div', { class: 'log' }));
+  const card = el('div', { class: 'card', style: 'border-left:3px solid var(--accent)' });
+  const paint = () => {
+    const h = Object.assign({}, S.hub || {}, S.hubSelf || {});
+    const changed = h.changed || [];
+    const badges = [el('span', { class: 'pill ok' }, 'running'),
+      h.version ? el('span', { class: 'pill' }, 'hub ' + h.version) : null,
+      h.mode ? el('span', { class: 'pill', title: h.mode === 'checkout' ? 'updated with git (fast-forward)' : 'updated with pip' },
+        h.mode === 'checkout' ? 'git checkout' : 'installed package') : null,
+      changed.length ? el('span', { class: 'pill warn', title: changed.join('\n') }, `${changed.length} edited file${changed.length > 1 ? 's' : ''}`) : null,
+      h.stale || S.hubUpdated ? el('span', { class: 'pill warn' }, 'restart to use the new code') : null];
+    const restartPrimary = !!(h.stale || S.hubUpdated);
+    const check = el('button', { class: 'ghost', onclick: async e => {
+      const b = e.target; b.disabled = true; b.textContent = 'checking…';
+      try {
+        const d = await (await fetch('/api/hub/check-update', { cache: 'no-store' })).json();
+        S.hubBehind = !!d.behind;
+        update.className = d.behind && !restartPrimary ? 'primary' : 'ghost';
+        if (d.behind) {
+          b.textContent = `update available (hub ${d.remote_version || d.remote || '?'}${d.behind_n ? ', ' + d.behind_n + ' commit' + (d.behind_n > 1 ? 's' : '') : ''})`;
+          log.innerHTML = '';
+          for (const ln of (d.incoming || [])) log.append(el('div', {}, ln));
+        } else b.textContent = d.reason ? d.reason : `up to date (hub ${d.version || h.version || ''})`;
+      } catch (err) { b.textContent = 'check failed'; }
+      b.disabled = false;
+    } }, 'Check for updates');
+    const update = el('button', { class: S.hubBehind && !restartPrimary ? 'primary' : 'ghost', onclick: async e => {
+      if (changed.length && !await askConfirm('Update the hub',
+        `You have edited ${changed.length} file${changed.length > 1 ? 's' : ''} in the hub's folder (${changed.slice(0, 4).join(', ')}${changed.length > 4 ? ' …' : ''}). ` +
+        'They are put aside with git stash before the update (git stash pop brings them back). Update now?', 'Update')) return;
+      await runHubUpdate(log, e.target);
+    } }, 'Update');
+    const restart = el('button', { class: restartPrimary ? 'primary' : 'ghost', disabled: !(h.restartable),
+      title: 'Stop this hub and start a fresh one on the same port — after an update. A run in progress is stopped.',
+      onclick: () => restartHub() }, 'Restart hub');
+    card.replaceChildren(
+      el('h4', {}, 'Steltic Hub', badges),
+      el('p', { class: 'note' }, 'The app itself — this window, the Modules page, projects and runs — and the modules that ship inside it ' +
+        '(marked bundled), whose code updates with it. Update fetches the newest hub from GitHub; Restart hub then runs it.'),
+      el('p', { class: 'meta', style: 'margin-top:8px' },
+        `${h.mode === 'checkout' ? (h.remote || 'https://github.com/Steltic/steltic_hub') : 'https://github.com/Steltic/steltic_hub'}  ${h.commit || ''}` +
+        (h.branch ? ` (${h.branch})` : '') + (h.source ? ` · ${h.source}` : '')),
+      el('div', { class: 'actions' }, update, check, restart),
+      log);
+  };
+  card._paint = paint;
+  paint();
+  fetch('/api/hub/status', { cache: 'no-store' }).then(r => r.json()).then(d => { S.hubSelf = d; paint(); }).catch(() => {});
+  return card;
+}
+
+async function runHubUpdate(log, btn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = 'updating…';
+  log.innerHTML = '';
+  let ok = false, result = null;
+  await stream('/api/hub/update', { method: 'POST' }, ev => {
+    if (ev.type === 'log') log.append(el('div', {}, ev.text));
+    else if (ev.type === 'error') log.append(el('div', { class: 'e' }, ev.text));
+    else if (ev.type === 'done') { ok = !!ev.ok; result = ev.result || null; }
+    while (log.childNodes.length > 3000) log.removeChild(log.firstChild);
+    log.scrollTop = log.scrollHeight;
+  });
+  btn.disabled = false; btn.textContent = old;
+  if (ok && result && result.restart_needed) {
+    S.hubUpdated = true;
+    log.append(el('div', { class: 'g' }, `updated${result.version ? ' to hub ' + result.version : ''} — press Restart hub to run it`));
+    toast('hub updated — restart it to run the new version', 'ok');
+  } else if (ok) {
+    log.append(el('div', { class: 'g' }, 'already up to date'));
+    toast('the hub is up to date', 'ok');
+  } else {
+    log.append(el('div', { class: 'e' }, 'not updated — see the log above'));
+    toast('hub not updated — see the log', 'bad');
+  }
+  log.scrollTop = log.scrollHeight;
+  try { S.hubSelf = await (await fetch('/api/hub/status', { cache: 'no-store' })).json(); } catch (e) { }
+  if (S.special === 'modules') renderSpecial();
 }
 
 function optionalSection(m, log) {

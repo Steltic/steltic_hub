@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, envs, jobs, sac
+from . import config, envs, jobs, sac, selfupdate
 from .manifest import ManifestError
 from .registry import Registry, RegistryError
 from .runners import ServerSupervisor, JobRuns, run_cli, run_http, sse, RunError, build_ctx, expand, TOKEN_HEADER, SUPERSEDED_DIR
@@ -217,6 +217,9 @@ def _threaded_sse(work):
         try:
             result = work(log)
             q.put({"type": "done", "ok": True, "result": result})
+        except selfupdate.UpdateError as e:          # a refusal with its reason, not a crash
+            q.put({"type": "error", "text": str(e)})
+            q.put({"type": "done", "ok": False})
         except Exception as e:
             q.put({"type": "error", "text": f"{type(e).__name__}: {e}"})
             q.put({"type": "done", "ok": False})
@@ -788,6 +791,42 @@ async def hub_shutdown():
     if not _request_exit():
         raise HTTPException(409, "not running under steltic-hub (no server handle to stop)")
     return {"ok": True, "pid": os.getpid()}
+
+
+# ---------------------------------------------------------------- the hub as a module (Modules page)
+# The hub's own card: what is running and where its code lives, Check for updates and Update -- the same
+# buttons every module has (selfupdate.py says how a checkout and an installed package are each updated).
+# Restart hub (below) is what makes an update take effect.
+@app.get("/api/hub/status")
+async def hub_status():
+    loop = asyncio.get_running_loop()
+    st = await loop.run_in_executor(None, selfupdate.status)
+    return {**st, **hub_info()}
+
+
+@app.get("/api/hub/check-update")
+async def hub_check_update():
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, selfupdate.check)
+
+
+def _reinstall_bundled(mod_ids: list, log) -> None:
+    """After a hub update changed a bundled module's requirements: rebuild that module's environment, unless
+    it is not installed (nothing to rebuild) or one of its runs is in flight (it would break under it)."""
+    busy = {k.split(".", 1)[0] for k in RUNS.live_tabs()}
+    for mid in mod_ids:
+        if not REG.is_installed(mid):
+            continue
+        if mid in busy:
+            log(f"[hub] {REG.name(mid)} has a run in progress -- press Update on its card once it finishes")
+            continue
+        SUP.stop(mid)
+        REG.update(mid, log=log)
+
+
+@app.post("/api/hub/update")
+async def hub_update():
+    return _threaded_sse(lambda log: selfupdate.update(log=log, reinstall_bundled=_reinstall_bundled))
 
 
 @app.post("/api/hub/restart")
