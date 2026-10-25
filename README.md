@@ -540,6 +540,25 @@ levels the text's labels. Basis values (SDS, site class, loads, systems, grades)
 each quoting the words it came from, and a value whose quote is not in the text is not taken. Without a model
 connection the page says so; the file upload and pasted code need none.
 
+**A file and text together.** With a file attached, the same box gives what the file leaves open
+(`userbuilding/values.py`): an OpenSees model or an .e2k has no seismic basis, few loads and no systems, and the text
+supplies them -- one button reads both. `name = value` lines are read directly, no model connection needed
+(`SDS = 1.0`, `site class = D`, `system X = SMF`, `R = 8`, `D = 90 psf` or `D floor = 90, D roof = 25`, `4.3 kPa` is
+converted, `grade = A992`, `bases = fixed`, `deck span = X`, `doublers = none`, `T1 X = 1.25 s`, `V X = 410 kip`,
+`seismic weight = 6,850 kip`, or any question's id from step 2); sentences are read with the hub's model connection
+against the list of questions, and a value whose quote is not in the text is not taken. HR reads the file first; the
+page then fetches HR's reading (`_intake/description_raw.json`), puts each value in as a proposal on its question,
+quoting the words (`from your text: "SDS = 1.0"`), and gives HR the description again. Nothing is used until it is
+accepted in step 2, where **Accept the N values from your text** accepts them in one click -- together with the ones HR
+asks only afterwards (R, Cd, Omega0, rho once the system is set; Ie once the risk category is; the deck span once the
+floors are one-way), which were proposed in advance. Where the file gives a value, the file's is used and the report
+says so; the engineer's own T1 / V / W / drift go to the confirmation check (a warning only). Step 1 shows what was
+read, with the words, and what was not used or not understood; **Add these values to the building read already**
+applies an edited text without uploading the file again (the text is the whole story: an earlier text's values it no
+longer gives are taken out), and an accept given to a value the text has since changed is taken back, so the new value
+is used only once accepted. Pasted OpenSees code beside a file is refused (attach it as the file instead).
+`tests/test_userbuilding_text_values.py`.
+
 ## Admin
 
 A bundled module (`catalog/steltic_admin/`; fastapi + uvicorn + httpx in its own venv) that runs

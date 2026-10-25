@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "steltic_userbuilding",
   "name": "User-designed building",
-  "blurb": "Bring a steel building you designed yourself — the Steltic building template, an ETABS .e2k model, or an OpenSees model (Tcl or OpenSeesPy). HR Steel models it exactly as given (build-only: nothing resized, nothing invented, every missing key item asked), you confirm the model, and the Nonlinear module runs its full suite on it: pushover, NLRHA, DDM.",
+  "blurb": "Bring a steel building you designed yourself — the Steltic building template, an ETABS .e2k model, or an OpenSees model (Tcl or OpenSeesPy), with what the file leaves open typed beside it (SDS, loads, systems, your own T1 / V / W). HR Steel models it exactly as given (build-only: nothing resized, nothing invented, every missing key item asked), you confirm the model, and the Nonlinear module runs its full suite on it: pushover, NLRHA, DDM.",
   "accent": "#7fb3ff",
   "order": 29,
   "homepage": "https://github.com/Steltic/steltic_hub",
@@ -43,7 +43,7 @@
       "title": "Your building",
       "kind": "embed",
       "src": "/?project={job}",
-      "blurb": "1 Upload the template, the .e2k, or your OpenSees model (.tcl, .py, or a .zip of the model folder: the script is run against a recorder, nothing is analysed, and the members, sections, releases, supports, diaphragms and masses are read from the model it builds) -- or type it into the box: paste OpenSees code, or describe the building in plain words (read with the hub's model connection into an OpenSeesPy script; anything the words leave open is asked, never guessed). 2 Answer what HR asks — key items have no default; proposed defaults are used only once you accept them, and are printed in every report. 3 HR builds the model (build-only). 4 Check the model in the 3-D viewer and confirm it. 5 Collect the specification values and run the full nonlinear suite (or tick “Do not collect specification values now” to run without them; the reports then come back marked UNVERIFIED). Every report is labelled “user-designed building: design basis supplied by the user, not checked by Steltic HR”."
+      "blurb": "1 Upload the template, the .e2k, or your OpenSees model (.tcl, .py, or a .zip of the model folder: the script is run against a recorder, nothing is analysed, and the members, sections, releases, supports, diaphragms and masses are read from the model it builds) -- and type in the box what the file leaves open (name = value lines such as SDS = 1.0, system X = SMF, D = 90 psf; sentences with the hub's model connection): each value comes back in step 2 as a default to accept, quoting your words. Or type the whole building into the box: paste OpenSees code, or describe it in plain words (read with the hub's model connection into an OpenSeesPy script; anything the words leave open is asked, never guessed). 2 Answer what HR asks — key items have no default; proposed defaults are used only once you accept them, and are printed in every report. 3 HR builds the model (build-only). 4 Check the model in the 3-D viewer and confirm it. 5 Collect the specification values and run the full nonlinear suite (or tick “Do not collect specification values now” to run without them; the reports then come back marked UNVERIFIED). Every report is labelled “user-designed building: design basis supplied by the user, not checked by Steltic HR”."
     },
     {
       "id": "files",
