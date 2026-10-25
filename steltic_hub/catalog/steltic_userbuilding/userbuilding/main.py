@@ -7,7 +7,10 @@ A user brings a steel building they designed. This page walks it through:
                  runs against a recorder, nothing is analysed) and its building description goes to the same intake.
                  The text box takes pasted OpenSees code (read the same way) or the building in plain words: the
                  hub's model connection reads the words into a spec, describe.py writes it as an OpenSeesPy script,
-                 and the OpenSees interpreter reads that (describe.py);
+                 and the OpenSees interpreter reads that (describe.py). With a file attached, the text gives what the
+                 file leaves open (SDS, loads, systems, grades, the user's own T1 / V / W): `name = value` lines are
+                 read directly, sentences with the model connection, and each value goes to HR as a proposal quoting
+                 the words, accepted in step 2 like any default (values.py);
   2. questions   HR's missing_items.json: key items are questions, proposed defaults need acceptance, refused
                  items are outside version 1 -- answers go back to HR (/api/build_only/answers);
   3. build       HR builds the model as given (/api/build_only/build; no redesign, nothing invented);
@@ -40,6 +43,7 @@ from . import describe as DS
 from . import llm
 from . import local_guard
 from . import opensees as OS
+from . import values as V
 from .hub import HubClient, HubError
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -137,6 +141,7 @@ def template(project: str = ""):
 # ------------------------------------------------------------------------------------------- 1-3 HR
 @app.post("/api/project/{p}/upload")
 async def upload(p: str, request: Request):
+    """The file, and with it (optional) the text box: values for what the file leaves open."""
     form = await request.form()
     up = form.get("file")
     if up is None or not getattr(up, "filename", None):
@@ -144,14 +149,159 @@ async def upload(p: str, request: Request):
     data = await up.read()
     replace = str(form.get("replace") or "").lower() in ("1", "true", "yes")
     name = pathlib.Path(up.filename.replace("\\", "/")).name
+    text = str(form.get("text") or "")
+    if len(text) > MAX_TEXT:
+        raise HTTPException(413, "the text is longer than %d characters" % MAX_TEXT)
+    if text.strip() and DS.classify(text) in ("py", "tcl"):
+        return JSONResponse({"code": "TEXT_IS_CODE", "detail": (
+            "The text box holds OpenSees code. With a file attached, the text gives the values the file leaves open "
+            "(SDS = 1.0, site class = D, system X = SMF, D = 90 psf ...): attach the code as the file, or clear the "
+            "file to build from the pasted code.")}, status_code=422)
+    after = (lambda out: _apply_text(p, text, out)) if text.strip() else (lambda out: _no_text(p, out))
     if name.lower().endswith(OS.UPLOAD_EXT):
-        return await run_in_threadpool(_opensees_upload, p, name, data, form, replace)
+        return await run_in_threadpool(_opensees_upload, p, name, data, form, replace, None, after)
     r = await run_in_threadpool(_hr, "POST", "/api/build_only/intake", 600.0,
                                 data={"building": clean_name(p), "replace": "1" if replace else ""},
                                 files={"file": (name, data, "application/octet-stream")})
-    if r.status_code < 400:
-        _os_report(p).unlink(missing_ok=True)            # the OpenSees report of an earlier upload no longer applies
-    return _relay(r)
+    if r.status_code >= 400:
+        return _relay(r)
+    _os_report(p).unlink(missing_ok=True)                # the OpenSees report of an earlier upload no longer applies
+    return JSONResponse(await run_in_threadpool(after, r.json()))
+
+
+def _no_text(p: str, out: dict) -> dict:
+    """A file without text: an earlier text's values are gone, and so are the accepts given to them."""
+    back, mi = _take_back_accepts(p, _old_values(p), {})
+    if mi:
+        out = dict(out, missing_items=mi)
+    _text_report(p).unlink(missing_ok=True)
+    return out
+
+
+# ------------------------------------------------------------------------------------------- values beside the file
+def _text_report(p: str) -> pathlib.Path:
+    return _ub_dir(p) / "text_values.json"
+
+
+def _hr_raw(p: str):
+    """HR's reading of the file, before any answer (its _intake/description_raw.json)."""
+    r = _hr("GET", "/api/report/%s/_intake/description_raw.json" % clean_name(p))
+    if r.status_code >= 400:
+        return None
+    try:
+        d = r.json()
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def _old_report(p: str) -> list:
+    """The values the last text gave HR as proposals ([] when none was applied)."""
+    try:
+        rep = json.loads(_text_report(p).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [v for v in rep.get("values") or [] if v.get("kind") != "your own result"] if rep.get("applied") else []
+
+
+def _old_values(p: str) -> dict:
+    return {v["id"]: v.get("value") for v in _old_report(p)}
+
+
+def _take_back_accepts(p: str, old: dict, new: dict):
+    """An accept takes whatever default HR proposes at the time. Where the text's value changed or went, the accept
+    given to the earlier value is taken back, so the new value (or HR's own default) is used only once accepted.
+    -> (ids taken back, HR's missing_items after it, or None)."""
+    changed = sorted(i for i in set(old) | set(new) if old.get(i) != new.get(i))
+    if not changed:
+        return [], None
+    r = _hr("GET", "/api/report/%s/answers.json" % clean_name(p))
+    try:
+        ans = r.json() if r.status_code < 400 else {}
+    except ValueError:
+        ans = {}
+    back = [i for i in changed if isinstance(ans.get(i), dict) and ans[i].get("accept") and "value" not in ans[i]]
+    if not back:
+        return [], None
+    r = _hr("POST", "/api/build_only/answers", json={"building": clean_name(p), "answers": {i: None for i in back}})
+    try:
+        return back, (r.json().get("missing_items") if r.status_code < 400 else None)
+    except ValueError:
+        return back, None
+
+
+def _apply_text(p: str, text: str, out: dict) -> dict:
+    """After HR took the file: read the text against what HR asks (and will ask), put the values in as proposals
+    quoting the words, and give HR the description again (JSON intake; the answers already given stay, except an
+    accept of a value the text has since changed).
+    out (HR's intake answer) -> the same, from the second intake, with `text_read` (the report)."""
+    earlier = _old_report(p)
+    old = {v["id"]: v.get("value") for v in earlier}
+    raw = _hr_raw(p)
+    if raw is None:
+        rep = dict(text=text, model=None, values=[], unclear=[], not_used=[], applied=False,
+                   notes=["HR's reading of the file could not be fetched: nothing from the text was used"])
+    else:
+        touched = V.from_text(raw)                       # /values on a building an earlier text touched
+        raw = V.strip(raw)
+        items = V.questions(out.get("missing_items"), raw, earlier)
+        chat = llm.chat_json if llm.available() else None
+        model = ((llm.creds() or {}).get("model") or "the model") if chat else ""
+        vals, rep = V.read(text, items, raw, chat, model)
+        rep.update(text=text, applied=False)
+        new = {i: v for i, (v, _w) in vals.items() if not i.startswith("user_results.")}
+        back, mi = _take_back_accepts(p, old, new)
+        if back:
+            rep["notes"].append("accepted before, and changed or gone in this text -- accept again in step 2: %s"
+                                % ", ".join(back))
+            if mi:
+                out = dict(out, missing_items=mi)
+        if vals or touched:                              # new values, or an earlier text's to take out
+            desc = V.apply(raw, vals, items)
+            r = _hr("POST", "/api/build_only/intake", timeout=600.0,
+                    json={"building": clean_name(p), "description": desc, "replace": False})
+            if r.status_code >= 400:
+                try:
+                    det = r.json().get("detail")
+                except ValueError:
+                    det = r.text[:500]
+                rep["notes"].append("HR did not take the values from your text: %s" % det)
+            else:
+                out = dict(out, **{k: v for k, v in r.json().items() if k in ("summary", "missing_items")})
+                rep["applied"] = bool(vals)
+    try:
+        _text_report(p).write_text(json.dumps(rep, indent=1, default=str), encoding="utf-8")
+    except OSError:
+        pass
+    out["text_read"] = rep
+    return out
+
+
+@app.post("/api/project/{p}/values")
+async def values(p: str, request: Request):
+    """The text box's values for the building HR has read already (no new file): the earlier text's are replaced."""
+    body = await request.json()
+    text = str(body.get("text") or "")
+    if not text.strip():
+        raise HTTPException(400, "type the values first (e.g. SDS = 1.0, site class = D)")
+    if len(text) > MAX_TEXT:
+        raise HTTPException(413, "the text is longer than %d characters" % MAX_TEXT)
+    if DS.classify(text) in ("py", "tcl"):
+        raise HTTPException(422, "the text box holds OpenSees code, not values: build from it instead")
+    st = _hr("GET", "/api/build_only/status/%s" % clean_name(p))
+    if st.status_code >= 400 or not (st.json() or {}).get("missing_items"):
+        raise HTTPException(409, "HR has not read a building for this project yet: attach the file with the text")
+    out = {"building": clean_name(p), "missing_items": st.json()["missing_items"]}
+    return JSONResponse(await run_in_threadpool(_apply_text, p, text, out))
+
+
+@app.get("/api/project/{p}/text")
+def text_report(p: str):
+    """What the last text beside a file gave ({} when none)."""
+    try:
+        return json.loads(_text_report(p).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 # ------------------------------------------------------------------------------------------- OpenSees models
@@ -168,9 +318,10 @@ def _os_choice(form, key, allowed):
     return v if v in allowed else None
 
 
-def _opensees_upload(p, name, data, form, replace, finish=None):
+def _opensees_upload(p, name, data, form, replace, finish=None, after=None):
     """An OpenSees model -> a building description (userbuilding/opensees) -> HR's build-only intake, as JSON.
-    finish(desc, report) -> (desc, report) runs before the intake (the text box's touches)."""
+    finish(desc, report) -> (desc, report) runs before the intake (the text box's touches); after(out) -> out once
+    HR has taken it (the values typed beside the file)."""
     d = _os_dir(p)
     inbox = d / "upload"
     if inbox.exists():
@@ -215,6 +366,8 @@ def _opensees_upload(p, name, data, form, replace, finish=None):
         _os_report(p).unlink(missing_ok=True)            # HR did not take it: the page keeps showing what HR has
         return _relay(r)
     out = r.json()
+    if after is not None:
+        out = after(out)
     out["opensees"] = rep
     return JSONResponse(out)
 
@@ -243,6 +396,7 @@ async def describe(p: str, request: Request):
     d = _os_dir(p)
     d.mkdir(parents=True, exist_ok=True)
     (d / "typed.txt").write_text(text, encoding="utf-8")
+    _text_report(p).unlink(missing_ok=True)              # the text is the building now, not values beside a file
     kind = DS.classify(text)
     if kind in ("py", "tcl"):
         opts = {k: body.get(k) for k in ("units", "up")}
