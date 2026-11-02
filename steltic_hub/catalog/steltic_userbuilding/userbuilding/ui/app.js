@@ -4,7 +4,7 @@
 const qs = new URLSearchParams(location.search);
 const S = {
   project: (qs.get('project') || 'Project').replace(/[^A-Za-z0-9_-]/g, '') || 'Project',
-  step: 1, hr: null, intake: null, answers: {}, checks: null, run: null, next: 0, log: [], poll: null,
+  drawingAvailable: false, step: 1, hr: null, intake: null, answers: {}, checks: null, run: null, next: 0, log: [], poll: null,
   os: null, osOpts: { units: '', up: '', main: '' }, osNeed: null, osCandidates: [], fileName: '',  // OpenSees intake
   text: null, textNeeds: null, llm: false, model: '', textRep: null,                                // the text box
   opts: loadOpts(),            // step 5's records / site class / opt-out: kept across the 3-second re-render
@@ -59,6 +59,7 @@ const STEPS = [
   { k: 3, t: 'Build (HR)', st: () => ({ running: 'building…', built: 'built', failed: 'failed', needs_input: 'needs input' }[hrState()] || '') },
   { k: 4, t: 'Confirm', st: () => confirmed() ? 'confirmed' : '' },
   { k: 5, t: 'Nonlinear suite', st: () => (S.run && S.run.state && S.run.state !== 'none') ? S.run.state : '' },
+  { k: 6, t: 'Drawings / info', st: () => S.drawingAvailable ? 'proposals proceed' : 'module update needed' },
 ];
 function renderSteps() {
   $('#steps').replaceChildren(...STEPS.map(s => el('div', { class: 'step' + (S.step === s.k ? ' on' : '') + (s.st() && s.k < S.step ? ' done' : ''),
@@ -75,7 +76,7 @@ function render() {
   renderSteps();
   $('#projname').textContent = S.project;
   const m = $('#main');
-  m.replaceChildren(el('div', { class: 'pane' }, [null, step1, step2, step3, step4, step5][S.step]()));
+  m.replaceChildren(el('div', { class: 'pane' }, [null, step1, step2, step3, step4, step5, step6][S.step]()));
 }
 
 // ------------------------------------------------------------------------------------------- 1 file
@@ -313,6 +314,7 @@ function fromText(m) {
   return ((m && m.groups) || []).flatMap(g => g.items || []).filter(it => it.kind === 'default' && /^from your (text|description)/.test(it.default_reason || ''));
 }
 function step2() {
+  if (!mi() && S.drawingAvailable) return step6();
   const m = mi();
   if (!m) return el('div', { class: 'card' }, 'Read a file first (step 1).');
   const save = el('button', { class: 'primary', onclick: async () => {
@@ -346,6 +348,7 @@ function step2() {
       el('div', { class: 'why' }, 'needed for: ' + it.needed_for + (it.where ? ' · ' + it.where : '')), answerInput(it)))));
   return el('div', {},
     el('h2', {}, 'What HR needs before it can build'),
+    S.drawingAvailable ? el('button', { onclick: () => { S.step=6; render(); } }, 'Drawing information requests - provisional drawings proceed') : null,
     el('p', { class: 'lead' }, 'Key items have no default: the build never starts without them. A proposed default is used only once you accept it. Refused items are outside version 1: change them in your model, or the building cannot be run.'),
     el('div', { class: 'counts' }, ['key', 'default', 'refused', 'info'].map(k => el('span', {}, `${m.counts[k]} ${k}`))),
     el('div', { class: 'row' }, accAll, save, m.ready ? el('button', { onclick: () => { S.step = 3; render(); } }, 'Go to Build →') : null),
@@ -444,9 +447,22 @@ function startPoll() {
 }
 
 (async () => {
-  try { const me = await api('/api/me'); S.llm = !!me.llm; S.model = me.model || ''; $('#status').textContent = me.steltic_up ? 'HR Steel connected' : 'HR Steel not reachable'; $('#status').className = 'note ' + (me.steltic_up ? 'ok' : 'bad'); } catch (e) { /* */ }
+  try { const me = await api('/api/me'); S.drawingAvailable=!!me.openbim; S.llm = !!me.llm; S.model = me.model || ''; $('#status').textContent = me.steltic_up ? 'HR Steel connected' : 'HR Steel not reachable'; $('#status').className = 'note ' + (me.steltic_up ? 'ok' : 'bad'); } catch (e) { /* */ }
   await refresh();
   S.step = !mi() ? 1 : (!mi().ready ? 2 : (!built() ? 3 : (!confirmed() ? 4 : 5)));
+  if(qs.get('step')==='6') S.step=6;
   render();
   if (hrState() === 'running' || (S.run && S.run.state === 'running')) startPoll();
 })();
+
+// Same information-request widget used by the standalone openBIM Hub module.
+function step6() {
+  const host=el('div',{});
+  if(!S.drawingAvailable){host.textContent='Update the User-designed building module to install openBIM drawings.';return host}
+  host.textContent='Loading drawing requests...';
+  setTimeout(async()=>{try{
+    if(!window.StelticDrawingQueries) await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/openbim-ui.js';script.onload=resolve;script.onerror=()=>reject(Error('Drawing module did not load'));document.head.append(script)});
+    if(host.isConnected) await window.StelticDrawingQueries.mount(host,S.project);
+  }catch(e){host.textContent=e.message}},0);
+  return host;
+}
