@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "steltic_openbim",
   "name": "openBIM drawings",
-  "blurb": "HR/CFS drawings with non-blocking information requests and assembled connection details for 23 source-bound fictional review buildings.",
+  "blurb": "HR/CFS drawings with non-blocking information requests and assembled connection details for 43 source-bound fictional review buildings.",
   "accent": "#83b6a5",
   "order": 30,
   "homepage": "https://github.com/Steltic/steltic_openBIM",
