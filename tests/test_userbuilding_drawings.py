@@ -59,3 +59,33 @@ def test_hub_and_openbim_manifest_share_the_project_store():
     assert user['env_vars']['OPENBIM_JOBS']=='{data_dir}/modules_data/steltic_openbim/sessions/local/jobs'
     assert drawings['env_vars']['OPENBIM_JOBS']=='{jobs_dir}'
     assert any(t.get('src','').endswith('&step=6') for t in user['tabs'])
+
+
+def test_varied_case_uses_existing_queries_and_publishes_assembled_details():
+    from steltic_openbim.review_cases import evidence
+    from steltic_openbim.drawing_workflow import fingerprint
+    package=evidence('cfs26')['package'];digest=fingerprint(package)
+    client=TestClient(um.app);project='CanopyReview'+uuid.uuid4().hex[:12]
+    base=f'/api/project/{project}/drawings'
+    response=client.post(base+'/upload',files={'file':('package.json',json.dumps(package))})
+    assert response.status_code==200,response.text
+    provisional=response.json()
+    assert provisional['drawing_status']=='provisional'
+    assert client.get(base).json()['available_test_scenario']=='cfs26'
+    assert not client.get(base).json()['questions']['blocks_drawings']
+    payload=dict(revision=provisional['revision'],source_model_sha256=digest,confirm_fictional=True,author='Fictional test acceptance')
+    adopted=client.post(base+'/fictional-design',json=payload)
+    assert adopted.status_code==200,adopted.text
+    assert adopted.json()['revision']==2
+    scenes=client.get(base+'/file/connection_assemblies.json')
+    assert scenes.status_code==200
+    assert scenes.json()['source_sha256']==digest
+    assert any(s['family']=='review_canopy_knee' for s in scenes.json()['assemblies'])
+    assert client.get(base+'/file/drawings.pdf').content.startswith(b'%PDF')
+    assert client.post(base+'/fictional-design',json=payload).status_code==409
+    current=client.get(base).json();request=current['requests'][0]
+    reopened=client.post(base+'/answers',json=dict(revision=current['revision'],source_model_sha256=digest,id=request['id'],action='reopen',author='Fictional test acceptance',note='Reopen for coordination review.'))
+    assert reopened.status_code==200,reopened.text
+    assert reopened.json()['drawing_status']=='provisional'
+    assert len(client.get(base+'/history').json()['revisions'])==3
+    assert fingerprint(package)==digest
