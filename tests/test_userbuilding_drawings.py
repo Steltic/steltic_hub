@@ -30,6 +30,14 @@ def test_existing_question_page_can_publish_without_resolving_information():
     questions=client.get(base).json()['questions']
     assert questions['ready'] and not questions['blocks_drawings']
     assert questions['groups'][0]['items'][0]['accepted']
+    # Authored pilot answers must not supply invented data to an ordinary job.
+    assert client.get(base).json()['available_test_scenario'] is None
+    fictional=client.post(base+'/fictional-design',json={'revision':state['revision'],
+        'source_model_sha256':state['source_model_sha256'],'confirm_fictional':True,
+        'author':'Integration test'})
+    assert fictional.status_code==422
+    unchanged=client.get(base).json()
+    assert unchanged['revision']==state['revision'] and unchanged['drawing_status']=='provisional'
     before=client.get(base+'/file/drawings.pdf').content
     assert before.startswith(b'%PDF')
     updated=client.post(base+'/answers',json={'revision':state['revision'],
