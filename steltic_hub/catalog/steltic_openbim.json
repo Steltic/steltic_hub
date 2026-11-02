@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "steltic_openbim",
   "name": "openBIM drawings",
-  "blurb": "HR/CFS coordination drawing sets with non-blocking information requests. Proposals are clearly marked TBD until quantitatively resolved.",
+  "blurb": "HR/CFS drawing sets with non-blocking information requests, plus dimensioned design drawings for the three reviewed fictional pilots.",
   "accent": "#83b6a5",
   "order": 30,
   "homepage": "https://github.com/Steltic/steltic_openBIM",
