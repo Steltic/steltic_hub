@@ -61,17 +61,18 @@ def test_hub_and_openbim_manifest_share_the_project_store():
     assert any(t.get('src','').endswith('&step=6') for t in user['tabs'])
 
 
-def test_varied_case_uses_existing_queries_and_publishes_assembled_details():
+@pytest.mark.parametrize('case,family',[('cfs26','review_canopy_knee'),('cfs27','review_next_portal_joint')])
+def test_varied_case_uses_existing_queries_and_publishes_assembled_details(case,family):
     from steltic_openbim.review_cases import evidence
     from steltic_openbim.drawing_workflow import fingerprint
-    package=evidence('cfs26')['package'];digest=fingerprint(package)
-    client=TestClient(um.app);project='CanopyReview'+uuid.uuid4().hex[:12]
+    package=evidence(case)['package'];digest=fingerprint(package)
+    client=TestClient(um.app);project='DrawingReview'+uuid.uuid4().hex[:12]
     base=f'/api/project/{project}/drawings'
     response=client.post(base+'/upload',files={'file':('package.json',json.dumps(package))})
     assert response.status_code==200,response.text
     provisional=response.json()
     assert provisional['drawing_status']=='provisional'
-    assert client.get(base).json()['available_test_scenario']=='cfs26'
+    assert client.get(base).json()['available_test_scenario']==case
     assert not client.get(base).json()['questions']['blocks_drawings']
     payload=dict(revision=provisional['revision'],source_model_sha256=digest,confirm_fictional=True,author='Fictional test acceptance')
     adopted=client.post(base+'/fictional-design',json=payload)
@@ -80,7 +81,7 @@ def test_varied_case_uses_existing_queries_and_publishes_assembled_details():
     scenes=client.get(base+'/file/connection_assemblies.json')
     assert scenes.status_code==200
     assert scenes.json()['source_sha256']==digest
-    assert any(s['family']=='review_canopy_knee' for s in scenes.json()['assemblies'])
+    assert any(s['family']==family for s in scenes.json()['assemblies'])
     assert client.get(base+'/file/drawings.pdf').content.startswith(b'%PDF')
     assert client.post(base+'/fictional-design',json=payload).status_code==409
     current=client.get(base).json();request=current['requests'][0]
