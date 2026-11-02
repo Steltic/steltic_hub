@@ -10,10 +10,16 @@
     "bundled": "steltic_userbuilding",
     "url": "https://github.com/Steltic/steltic_hub"
   },
-  "needs": ["steltic", "steltic_nonlinear"],
+  "needs": [
+    "steltic",
+    "steltic_nonlinear"
+  ],
   "env": {
     "python": "3.12",
-    "install": ["-r", "requirements.txt"]
+    "install": [
+      "-r",
+      "requirements.txt"
+    ]
   },
   "env_vars": {
     "STELTIC_URL": "{server.steltic}",
@@ -22,17 +28,29 @@
     "NL_PYTHON": "{python.steltic_nonlinear}",
     "NL_DIR": "{need.steltic_nonlinear}",
     "STELTIC_ENGINE_DIR": "{need.steltic}/steel_engine",
-    "UB_JOBS": "{jobs_dir}"
+    "UB_JOBS": "{jobs_dir}",
+    "CFS_JOBS": "{data_dir}/modules_data/steltic_cfs/sessions/local/jobs",
+    "OPENBIM_JOBS": "{data_dir}/modules_data/steltic_openbim/sessions/local/jobs"
   },
   "credentials": {
     "path": "/api/creds",
     "method": "POST"
   },
   "server": {
-    "command": ["-m", "uvicorn", "userbuilding.main:app", "--host", "127.0.0.1", "--port", "{port}"],
+    "command": [
+      "-m",
+      "uvicorn",
+      "userbuilding.main:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "{port}"
+    ],
     "health": "/healthz",
     "cwd": "{module_dir}",
-    "requires": ["steltic"]
+    "requires": [
+      "steltic"
+    ]
   },
   "output": {
     "root": "{job_dir}"
@@ -44,6 +62,13 @@
       "kind": "embed",
       "src": "/?project={job}",
       "blurb": "1 Upload the template, the .e2k, or your OpenSees model (.tcl, .py, or a .zip of the model folder: the script is run against a recorder, nothing is analysed, and the members, sections, releases, supports, diaphragms and masses are read from the model it builds) -- and type in the box what the file leaves open (name = value lines such as SDS = 1.0, system X = SMF, D = 90 psf; sentences with the hub's model connection): each value comes back in step 2 as a default to accept, quoting your words. Or type the whole building into the box: paste OpenSees code, or describe it in plain words (read with the hub's model connection into an OpenSeesPy script; anything the words leave open is asked, never guessed). 2 Answer what HR asks — key items have no default; proposed defaults are used only once you accept them, and are printed in every report. 3 HR builds the model (build-only). 4 Check the model in the 3-D viewer and confirm it. 5 Collect the specification values and run the full nonlinear suite (or tick “Do not collect specification values now” to run without them; the reports then come back marked UNVERIFIED). Every report is labelled “user-designed building: design basis supplied by the user, not checked by Steltic HR”."
+    },
+    {
+      "id": "drawings",
+      "title": "Drawings and information requests",
+      "kind": "embed",
+      "src": "/?project={job}&step=6",
+      "blurb": "Provisional proposals are accepted for coordination drawings by default. Confirm locations when ready to regenerate the set; other information returns to the design agent."
     },
     {
       "id": "files",

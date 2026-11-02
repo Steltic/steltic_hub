@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "id": "steltic_openbim",
+  "name": "openBIM drawings",
+  "blurb": "HR/CFS coordination drawing sets with non-blocking information requests. Proposals are clearly marked TBD until quantitatively resolved.",
+  "accent": "#83b6a5",
+  "order": 30,
+  "homepage": "https://github.com/Steltic/steltic_openBIM",
+  "source": {
+    "url": "https://github.com/Steltic/steltic_openBIM",
+    "branch": "main"
+  },
+  "env": {
+    "python": "3.12",
+    "install": [
+      ".[hub]"
+    ]
+  },
+  "env_vars": {
+    "OPENBIM_JOBS": "{jobs_dir}",
+    "HR_JOBS": "{data_dir}/modules_data/steltic/sessions/local/jobs",
+    "CFS_JOBS": "{data_dir}/modules_data/steltic_cfs/sessions/local/jobs"
+  },
+  "server": {
+    "command": [
+      "-m",
+      "uvicorn",
+      "steltic_openbim.drawing_server:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "{port}"
+    ],
+    "health": "/healthz",
+    "cwd": "{module_dir}"
+  },
+  "output": {
+    "root": "{job_dir}"
+  },
+  "tabs": [
+    {
+      "id": "drawings",
+      "title": "Drawings and queries",
+      "kind": "embed",
+      "src": "/?project={job}"
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "kind": "files"
+    }
+  ]
+}

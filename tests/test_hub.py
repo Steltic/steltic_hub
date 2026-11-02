@@ -16,7 +16,7 @@ from steltic_hub import config, jobs, runners                            # noqa:
 def test_every_bundled_manifest_parses():
     cat = load_catalog(config.CATALOG_DIR)
     assert set(cat) == {"steltic", "steltic_cfs", "steltic_nonlinear", "steltic_grokbot", "steltic_variations",
-                        "steltic_probabilistic", "steltic_admin", "steltic_userbuilding"}
+                        "steltic_probabilistic", "steltic_admin", "steltic_userbuilding", "steltic_openbim"}
     ub = cat["steltic_userbuilding"]
     assert ub.bundled == "steltic_userbuilding" and ub.needs == ["steltic", "steltic_nonlinear"]
     assert ub.server.get("requires") == ["steltic"] and ub.env_vars["NL_PYTHON"] == "{python.steltic_nonlinear}"

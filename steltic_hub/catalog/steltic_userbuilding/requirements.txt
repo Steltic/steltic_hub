@@ -2,3 +2,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 httpx>=0.27
 python-multipart>=0.0.9
+
+steltic-openbim[hub] @ git+https://github.com/Steltic/steltic_openBIM@b00c9278923cd889fa68e366f2ad176c43464de7

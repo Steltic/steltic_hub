@@ -60,6 +60,16 @@ app = FastAPI(title="User-designed building")
 local_guard.install(app)
 app.mount("/static", StaticFiles(directory=str(UI)), name="static")
 
+# The drawing module shares this page's query UI, but keeps provisional drawing
+# acceptance separate from the structural model's required-input checks.
+try:
+    from steltic_openbim.drawing_api import router as drawing_router
+    from steltic_openbim.drawing_workflow import DrawingStore
+except ImportError:
+    DrawingStore = None
+else:
+    app.include_router(drawing_router(DrawingStore(os.environ.get('OPENBIM_JOBS') or UB_JOBS), {'HR':HR_JOBS,'CFS':os.environ.get('CFS_JOBS')}))
+
 
 @app.middleware("http")
 async def _no_stale_assets(request, call_next):
@@ -130,7 +140,7 @@ async def me():
         except Exception:
             up = False
     return {"steltic_url": STELTIC_URL, "steltic_up": up, "hub_url": HUB_URL, "nl_python": bool(NL_PYTHON),
-            "hr_jobs": str(HR_JOBS), "llm": llm.available(), "model": (llm.creds() or {}).get("model")}
+            "hr_jobs": str(HR_JOBS), "llm": llm.available(), "model": (llm.creds() or {}).get("model"), "openbim": DrawingStore is not None}
 
 
 @app.get("/api/template")

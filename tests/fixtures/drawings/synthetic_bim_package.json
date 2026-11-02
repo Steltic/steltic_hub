@@ -1,0 +1,209 @@
+{
+  "schema": "steltic.bim_package",
+  "schema_version": "1.0",
+  "building_id": "synthetic_contract_fixture",
+  "module": "HR",
+  "units": {
+    "length": "in",
+    "force": "kip",
+    "stress": "ksi"
+  },
+  "analysis": {
+    "nodes": [],
+    "elements": []
+  },
+  "physical": {
+    "profiles": [
+      {
+        "id": "TEST",
+        "family": "i",
+        "dimensions": {
+          "d": 8,
+          "bf": 4,
+          "tf": 0.4,
+          "tw": 0.25
+        },
+        "status": "declared"
+      }
+    ],
+    "materials": [
+      {
+        "id": "steel",
+        "specification": "Synthetic fixture material; not a design",
+        "status": "declared"
+      }
+    ],
+    "members": [
+      {
+        "id": "beam",
+        "kind": "beam",
+        "axis": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            120,
+            0,
+            0
+          ]
+        ],
+        "local_y": [
+          0,
+          1,
+          0
+        ],
+        "profile_id": "TEST",
+        "material_id": "steel",
+        "reference_line": "centroid",
+        "end_offsets": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "analysis_ids": [],
+        "status": "declared"
+      }
+    ],
+    "joints": [
+      {
+        "id": "support",
+        "point": [
+          0,
+          0,
+          0
+        ],
+        "member_ends": [
+          {
+            "member_id": "beam",
+            "end": "start"
+          }
+        ],
+        "status": "declared"
+      },
+      {
+        "id": "free",
+        "point": [
+          120,
+          0,
+          0
+        ],
+        "member_ends": [
+          {
+            "member_id": "beam",
+            "end": "end"
+          }
+        ],
+        "status": "declared"
+      }
+    ],
+    "joint_dispositions": [
+      {
+        "joint_id": "free",
+        "reason": "Synthetic free end"
+      }
+    ],
+    "coverage": {
+      "primary_members": {
+        "complete": true,
+        "basis": "Complete synthetic one-member fixture; no other geometry"
+      },
+      "secondary_members": {
+        "complete": true,
+        "basis": "Complete synthetic one-member fixture; no other geometry"
+      },
+      "openings": {
+        "complete": true,
+        "basis": "Complete synthetic one-member fixture; no other geometry"
+      },
+      "connections": {
+        "complete": true,
+        "basis": "Complete synthetic one-member fixture; no other geometry"
+      }
+    },
+    "connections": [
+      {
+        "id": "support-detail",
+        "joint_id": "support",
+        "scope": "designed",
+        "design_record_ids": [
+          "connections/c1"
+        ],
+        "parts": [
+          {
+            "id": "plate",
+            "kind": "plate",
+            "material_id": "steel",
+            "geometry": {
+              "type": "box",
+              "origin": [
+                0,
+                0,
+                0
+              ],
+              "size": [
+                0.5,
+                4,
+                6
+              ],
+              "x_axis": [
+                1,
+                0,
+                0
+              ],
+              "y_axis": [
+                0,
+                1,
+                0
+              ]
+            }
+          }
+        ],
+        "status": "declared"
+      }
+    ],
+    "panels": [],
+    "openings": [],
+    "interfaces": [],
+    "analysis_only": [],
+    "record_dispositions": []
+  },
+  "design_records": [
+    {
+      "id": "connections/c1",
+      "table": "connections",
+      "source_pointer": "/connections/0",
+      "waived": false,
+      "data": {
+        "id": "c1",
+        "selection": "Synthetic contract fixture only"
+      }
+    }
+  ],
+  "design_context": {
+    "note": "Synthetic contract fixture only, not a structural design."
+  },
+  "layout_evidence": {},
+  "source_findings": [],
+  "required": true,
+  "readiness": {
+    "status": "ready"
+  },
+  "provenance": {
+    "module": "HR",
+    "package_file": "calc_package.json",
+    "source_files": {},
+    "engine_files": {},
+    "mode": "model_only_replay",
+    "analysis_executed": false,
+    "producer_revision": null
+  }
+}
