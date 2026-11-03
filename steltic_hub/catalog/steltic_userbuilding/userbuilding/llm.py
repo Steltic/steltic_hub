@@ -9,6 +9,7 @@ import json, re
 import httpx
 
 _CREDS: dict | None = None
+_NO_TEMPERATURE: set[tuple[str, str]] = set()
 
 
 class NotConfigured(RuntimeError):
@@ -39,7 +40,10 @@ def chat(system: str, user: str, max_tokens: int = 8000, temperature: float = 0.
     if not available():
         raise NotConfigured("no LLM connection (model MOCK or none set)")
     body = {"model": _CREDS["model"], "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "max_tokens": max_tokens, "temperature": temperature}
+            "max_tokens": max_tokens}
+    key = (_CREDS["base_url"], _CREDS["model"])
+    if temperature is not None and key not in _NO_TEMPERATURE:
+        body["temperature"] = temperature
     if json_mode:
         body["response_format"] = {"type": "json_object"}
     prov = (_CREDS.get("provider") or "").strip()
@@ -47,10 +51,18 @@ def chat(system: str, user: str, max_tokens: int = 8000, temperature: float = 0.
         body["provider"] = {"order": [prov], "allow_fallbacks": False}
     url = _CREDS["base_url"].rstrip("/") + "/chat/completions"
     with httpx.Client(timeout=httpx.Timeout(300.0, connect=20.0)) as cx:
-        r = cx.post(url, headers=_headers(), json=body)
-        if r.status_code == 400 and json_mode:                 # a provider that refuses response_format
-            body.pop("response_format", None)
+        for _ in range(3):  # at most one temperature and one response-format adaptation
             r = cx.post(url, headers=_headers(), json=body)
+            message = r.text.lower() if r.status_code == 400 else ""
+            if ("temperature" in body and "temperature" in message and
+                    any(term in message for term in ("deprecated", "unsupported", "not supported", "does not support"))):
+                body.pop("temperature")
+                _NO_TEMPERATURE.add(key)
+                continue
+            if r.status_code == 400 and "response_format" in body:
+                body.pop("response_format")
+                continue
+            break
         r.raise_for_status()
         d = r.json()
     return ((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
