@@ -7,7 +7,7 @@ name = "steltic-userbuilding"
 version = "0.2.0"
 description = "User-designed building: bring a steel building you designed (template or ETABS .e2k); HR Steel models it as given (build-only, no redesign) and the Nonlinear module runs its full suite on it"
 requires-python = ">=3.10"
-dependencies = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "httpx>=0.27", "python-multipart>=0.0.9", "steltic-openbim[hub] @ git+https://github.com/Steltic/steltic_openBIM@0176bd86a0ec71abdcf6191bc38a8425f5cec876"]
+dependencies = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "httpx>=0.27", "python-multipart>=0.0.9", "steltic-openbim[hub] @ git+https://github.com/Steltic/steltic_openBIM@14634a53b5e7271cacc0be77a1b262215133dd3c"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["userbuilding"]
