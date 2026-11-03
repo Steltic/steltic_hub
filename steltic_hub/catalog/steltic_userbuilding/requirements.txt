@@ -3,4 +3,4 @@ uvicorn[standard]>=0.27
 httpx>=0.27
 python-multipart>=0.0.9
 
-steltic-openbim[hub] @ git+https://github.com/Steltic/steltic_openBIM@5e291ae028dab087c798f2f17d54674cd664077b
+steltic-openbim[hub] @ git+https://github.com/Steltic/steltic_openBIM@61450816226b22be69ba557ec8665e0eaa3aaa61
