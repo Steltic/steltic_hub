@@ -61,6 +61,34 @@ def test_hub_and_openbim_manifest_share_the_project_store():
     assert any(t.get('src','').endswith('&step=6') for t in user['tabs'])
 
 
+def test_ordinary_hr_grouped_export_recovers_occurrences_and_questions():
+    from steltic_openbim.drawing_workflow import fingerprint
+    package=json.loads((ROOT/'tests/fixtures/drawings/synthetic_bim_package.json').read_text())
+    member=package['physical']['members'][0];a,b=member['axis']
+    package['module']='HR';package['layout_evidence']={'levels_in':[0,max(a[2],b[2])]}
+    package['analysis']={'nodes':[{'id':key,'point':point} for key,point in
+        [('a',a),('b',b),('c',[a[0],a[1]+240,a[2]]),('d',[b[0],b[1]+240,b[2]])]],
+        'elements':[{'id':'e1','node_ids':['a','b'],'kind':'beam','profile_id':member['profile_id']},
+                    {'id':'e2','node_ids':['c','d'],'kind':'beam','profile_id':member['profile_id']}]}
+    member['analysis_ids']=['e1','e2'];package['readiness']={'status':'ready'}
+    digest=fingerprint(package);client=TestClient(um.app)
+    base='/api/project/Recovery'+uuid.uuid4().hex[:12]+'/drawings'
+    response=client.post(base+'/upload',files={'file':('package.json',json.dumps(package))})
+    assert response.status_code==200,response.text
+    state=response.json()
+    assert state['representation']=='captured_source_worklines'
+    assert state['drawing_counts']['drawn_occurrences']==2
+    assert state['source_readiness']=='needs_input' and state['drawing_status']=='provisional'
+    assert len(state['requests'])==4 and all(r['accepted'] and r['proposal'] for r in state['requests'])
+    current=client.get(base).json()
+    assert current['available_test_scenario'] is None and not current['questions']['blocks_drawings']
+    model=client.get(base+'/file/source_workline_model.json').json()
+    assert {m['id'] for m in model['members']}=={'e1','e2'}
+    new=client.post(base+'/regenerate',json={'revision':state['revision'],'source_model_sha256':digest})
+    assert new.status_code==200 and new.json()['revision']==2
+    assert fingerprint(package)==digest
+
+
 @pytest.mark.parametrize('case,family',[
     ('cfs26','review_canopy_knee'),('cfs27','review_next_portal_joint'),
     ('hr19','review_pg_seat'),
