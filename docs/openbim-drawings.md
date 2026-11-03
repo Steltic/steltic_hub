@@ -1,5 +1,7 @@
 # openBIM drawings in the existing question flow
 
+Version 0.7.1 also repairs ordinary HR exports whose representative groups incorrectly claimed many separate members. The shared validator checks occurrence geometry; the drawing module recovers actual model worklines with levels, grids, marks and frame sections, and raises non-blocking requests for missing physical data. Regenerate an existing set after updating to recheck completeness without losing answers or earlier PDFs. The widget identifies recovered workline drawings explicitly; connection specifications remain TBD until their physical placement and details are supplied. See [live-job recovery](https://github.com/Steltic/steltic_openBIM/blob/main/docs/live-job-recovery.md).
+
 Update the User-designed building module to install its pinned openBIM dependency. **Questions** links to the drawing information requests, and **Drawings / info** opens them directly. The catalog also offers an independent openBIM module. Both use the same widget and project revision store.
 
 **Request register / answer queries** opens the editable register and expands the first unresolved request. The separate **Download request data (JSON)** link exports data. To receive this fix, update openBIM, stop and relaunch that module, then refresh its drawing tab; update User-designed building as well if using its embedded drawing page. Existing answers and revisions are retained. The 0.6.1 fix passed twelve drawing-workflow checks, four Hub integration checks and a browser form-save check using an isolated HR fixture.
