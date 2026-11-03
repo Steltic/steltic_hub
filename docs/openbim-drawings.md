@@ -2,6 +2,8 @@
 
 Update the User-designed building module to install its pinned openBIM dependency. **Questions** links to the drawing information requests, and **Drawings / info** opens them directly. The catalog also offers an independent openBIM module. Both use the same widget and project revision store.
 
+**Request register / answer queries** opens the editable register and expands the first unresolved request. The separate **Download request data (JSON)** link exports data. To receive this fix, update openBIM, stop and relaunch that module, then refresh its drawing tab; update User-designed building as well if using its embedded drawing page. Existing answers and revisions are retained. The 0.6.1 fix passed twelve drawing-workflow checks, four Hub integration checks and a browser form-save check using an isolated HR fixture.
+
 Choose a completed HR/CFS job containing a physical `bim_package.json`, or upload that export. Drawing information requests have explicit proposals accepted for provisional drawing by default. They do not block PDFs. Proposed positions/sizes remain dashed and labelled `TBD - resolve query`, with their dimensions omitted.
 
 Users can add information, quantitatively confirm an opening layout, reopen it, regenerate the set or import a revised physical package. Confirmed opening coordinates update the overlay and its schedule; prior PDFs/answers remain in revision history. Engineering/supplier notes require an updated source package to change structural geometry. No text answer silently cuts/redesigns framing or confirms an unresolved dimension.
