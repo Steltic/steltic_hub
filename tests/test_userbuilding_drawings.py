@@ -59,6 +59,9 @@ def test_hub_and_openbim_manifest_share_the_project_store():
     assert user['env_vars']['OPENBIM_JOBS']=='{data_dir}/modules_data/steltic_openbim/sessions/local/jobs'
     assert drawings['env_vars']['OPENBIM_JOBS']=='{jobs_dir}'
     assert any(t.get('src','').endswith('&step=6') for t in user['tabs'])
+    assert [t['title'] for t in drawings['tabs']]==['Steltic import','IFC import','IFC export','Files']
+    assert drawings['tabs'][1]['src']=='/ifc-import?project={job}'
+    assert drawings['tabs'][2]['src']=='/ifc-export?project={job}'
 
 
 def test_ordinary_hr_grouped_export_recovers_occurrences_and_questions():
