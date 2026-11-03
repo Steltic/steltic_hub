@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "steltic_openbim",
   "name": "openBIM drawings",
-  "blurb": "HR/CFS drawings with non-blocking information requests and assembled connection details for all 61 source-bound fictional review buildings.",
+  "blurb": "Steltic drawings and queries, IFC import with 3D model-data review, and IFC export.",
   "accent": "#83b6a5",
   "order": 30,
   "homepage": "https://github.com/Steltic/steltic_openBIM",
@@ -40,9 +40,21 @@
   "tabs": [
     {
       "id": "drawings",
-      "title": "Drawings and queries",
+      "title": "Steltic import",
       "kind": "embed",
       "src": "/?project={job}"
+    },
+    {
+      "id": "ifc-import",
+      "title": "IFC import",
+      "kind": "embed",
+      "src": "/ifc-import?project={job}"
+    },
+    {
+      "id": "ifc-export",
+      "title": "IFC export",
+      "kind": "embed",
+      "src": "/ifc-export?project={job}"
     },
     {
       "id": "files",
