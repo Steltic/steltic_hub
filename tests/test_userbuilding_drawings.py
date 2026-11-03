@@ -61,7 +61,10 @@ def test_hub_and_openbim_manifest_share_the_project_store():
     assert any(t.get('src','').endswith('&step=6') for t in user['tabs'])
 
 
-@pytest.mark.parametrize('case,family',[('cfs26','review_canopy_knee'),('cfs27','review_next_portal_joint')])
+@pytest.mark.parametrize('case,family',[
+    ('cfs26','review_canopy_knee'),('cfs27','review_next_portal_joint'),
+    ('hr19','review_pg_seat'),
+])
 def test_varied_case_uses_existing_queries_and_publishes_assembled_details(case,family):
     from steltic_openbim.review_cases import evidence
     from steltic_openbim.drawing_workflow import fingerprint
