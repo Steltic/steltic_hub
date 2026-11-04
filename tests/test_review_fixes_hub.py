@@ -360,9 +360,11 @@ def test_what_the_module_adds_to_a_package_file_is_not_a_new_design(tmp_path):
     (dst / "pushover").mkdir(); (dst / "pushover" / "p.json").write_text("p")
     log = []
     runners.stage_inputs(run, ctx, log.append)
-    assert (dst / "pushover" / "p.json").exists() and not (dst / runners.SUPERSEDED_DIR).exists()
+    assert (dst / "pushover" / "p.json").exists()
+    kept = _all_files(next((dst / runners.SUPERSEDED_DIR).iterdir()))
+    assert kept == {"design/calc_package.json": '{"members": 1, "ddm_analysis": {}}'}
     assert (dst / "design" / "calc_package.json").read_text() == '{"members": 1}'
-    assert not any("moved" in l for l in log)
+    assert not any("the design changed" in l for l in log)
 
 
 def test_a_project_staged_before_the_record_existed_is_handled(tmp_path):
@@ -373,6 +375,11 @@ def test_a_project_staged_before_the_record_existed_is_handled(tmp_path):
     src, dst = tmp_path / "hr_job", tmp_path / "project"
     _pkg(dst, {"cfg.py": "OLD", "report.html": "old", "nlrha/r.json": "nl-old", "upload.zip": "u"})
     _pkg(src, {"cfg.py": "NEW", "report.html": "new"})
+    # Reproduce the Windows failure deterministically: same size AND timestamp
+    # still leaves different bytes that must be preserved before replacement.
+    for name in ('cfg.py','report.html'):
+        stamp=(dst/name).stat().st_mtime_ns
+        os.utime(src/name,ns=(stamp,stamp))
     log = []
     runners.stage_inputs(run, {"src": str(src), "dst": str(dst)}, log.append)
     now = _all_files(dst)
@@ -384,6 +391,20 @@ def test_a_project_staged_before_the_record_existed_is_handled(tmp_path):
     _pkg(src, {"cfg.py": "NEWER", "report.html": "new"})
     runners.stage_inputs(run, {"src": str(src), "dst": str(dst)}, log.append)
     assert "nlrha/r.json" not in _all_files(dst)
+
+
+def test_preserved_timestamp_project_edit_is_archived_before_restage(tmp_path):
+    run=Run.parse({'kind':'cli','command':['x'],'stage':[STAGE]})
+    src,dst=tmp_path/'hr_job',tmp_path/'project'
+    _pkg(src,{'cfg.py':'OLD'})
+    runners.stage_inputs(run,{'src':str(src),'dst':str(dst)},lambda message:None)
+    stamp=(dst/'cfg.py').stat().st_mtime_ns
+    (dst/'cfg.py').write_text('FIX',encoding='utf8')
+    os.utime(dst/'cfg.py',ns=(stamp,stamp))
+    runners.stage_inputs(run,{'src':str(src),'dst':str(dst)},lambda message:None)
+    kept=_all_files(next((dst/runners.SUPERSEDED_DIR).iterdir()))
+    assert kept=={'cfg.py':'FIX'}
+    assert (dst/'cfg.py').read_text()=='OLD'
 
 
 def test_zip_packages_are_tracked_the_same_way(tmp_path):
@@ -441,7 +462,7 @@ def test_absolute_file_fields_are_confined(monkeypatch, tmp_path):
     (outside / "pkg.zip").write_bytes(b"PK")
     # the package is staged (copied into the project): outside the data folder it is refused
     for bad in (str(outside), str(outside / "pkg.zip"), "/", str(pathlib.Path.home())):
-        with pytest.raises(runners.RunError, match="outside the project"):
+        with pytest.raises(runners.RunError, match="outside the project|not inside the project"):
             runners.build_ctx(m, "AbsJ", {"package": bad}, Registry(), tab=tab)
     # the field's own default (HR Steel's output folder) and anything under the data folder are fine
     ctx = runners.build_ctx(m, "AbsJ", {}, Registry(), tab=tab)

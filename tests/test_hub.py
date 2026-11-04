@@ -19,7 +19,7 @@ def test_every_bundled_manifest_parses():
                         "steltic_probabilistic", "steltic_admin", "steltic_userbuilding", "steltic_openbim"}
     ub = cat["steltic_userbuilding"]
     assert ub.bundled == "steltic_userbuilding" and ub.needs == ["steltic", "steltic_nonlinear"]
-    assert ub.server.get("requires") == ["steltic"] and ub.env_vars["NL_PYTHON"] == "{python.steltic_nonlinear}"
+    assert ub.server.get("requires") == ["steltic","steltic_cfs"] and ub.env_vars["NL_PYTHON"] == "{python.steltic_nonlinear}"
     for f in ("userbuilding/main.py", "userbuilding/hub.py", "userbuilding/local_guard.py", "userbuilding/ui/index.html",
               "userbuilding/ui/app.js", "requirements.txt"):
         assert (config.CATALOG_DIR / ub.bundled / f).is_file(), f
@@ -803,7 +803,7 @@ def test_native_crash_exit_codes_are_explained():
 # A process that dies the way a native library does. Windows hands back the raw NTSTATUS; a POSIX
 # exit status is one byte and cannot carry 3221225477, so there the same event is a real SIGSEGV.
 # exitcodes.explain recognises both, which is all `"on": "native_crash"` asks of a code.
-_CRASH = "sys.exit(3221225477)" if sys.platform == "win32" else "os.kill(os.getpid(), signal.SIGSEGV)"
+_CRASH = "sys.exit(-1073741819)" if sys.platform == "win32" else "os.kill(os.getpid(), signal.SIGSEGV)"
 
 
 def _crash_script(tmp_path, name, body) -> pathlib.Path:
@@ -1102,6 +1102,7 @@ def test_cli_event_lines_are_relayed_as_events_and_the_rest_stays_log(monkeypatc
     event (so the browser shows model text, reasoning and tool lines the way it does for the design
     agents) and everything else as a log line. A hub-owned type (done, start) printed by a module stays a
     log line, and so does JSON that is not an event."""
+    monkeypatch.delenv('RAG_API_URL',raising=False)
     script = tmp_path / "talk.py"
     script.write_text("import json, os\n"
                       "print('starting')\n"

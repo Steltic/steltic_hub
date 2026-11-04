@@ -12,7 +12,7 @@ singleton, so in-process orchestration would be wrong even if the hub imported m
 which it never does.
 """
 from __future__ import annotations
-import asyncio, codecs, filecmp, fnmatch, json, os, re, secrets, shlex, shutil, signal, subprocess, sys, time, pathlib, zipfile
+import asyncio, codecs, fnmatch, json, os, re, secrets, shlex, shutil, signal, subprocess, sys, time, pathlib, zipfile
 import httpx
 from . import config, envs, exitcodes, jobs, sac
 from .manifest import Manifest, Tab, Run
@@ -233,9 +233,8 @@ def cli_args(tab: Tab, fields: dict, ctx: dict) -> list[str]:
 #     design/calc_package.json). Then the outputs the entry declares in `supersede` (analyses of the
 #     staged design) and the earlier design's copies are moved aside together, so
 #     _superseded/<time>/ holds the earlier design with its results;
-#   * a package file that changed, whose project copy was edited after it was staged, is moved aside
-#     before it is replaced. A package file that did not change is copied over its project copy as
-#     before.
+#   * a project copy edited after it was staged is moved aside before replacement, even when the
+#     incoming package is unchanged. Such a project edit does not supersede the design's analyses.
 # A project staged before the record existed has no history: project files that differ from the new
 # package are moved aside once, and a design that differs is warned about, not superseded (the
 # project's copy may differ only by what the module itself added).
@@ -280,10 +279,13 @@ def _dir_entries(src: pathlib.Path) -> dict:
 
 
 def _sig(p: pathlib.Path):
-    """What a project file looked like: size and whole-second mtime (coarse enough for every file system)."""
+    """Content identity of the project copy, including edits that keep its mtime.
+
+    Old timestamp-only records compare unequal once and are preserved safely.
+    """
     try:
         st = p.stat()
-        return [st.st_size, int(st.st_mtime)]
+        return [st.st_size, _file_hash(p)]
     except OSError:
         return None
 
@@ -364,17 +366,17 @@ def _stage_tree(s: dict, label: str, source: str, entries: dict, rd: pathlib.Pat
         design_changed = (any(_matches(rel, design_globs) for rel in changed)
                           or any(_matches(rel, design_globs) for rel in prev_files if rel not in entries))
         moves = list(stale)
-        for rel in sorted(changed):
+        for rel in sorted(entries):
             t = rd / rel
             if not t.is_file():
                 continue
             edited = was(rel).get("dst") is not None and _sig(t) != was(rel).get("dst")
-            if design_changed or edited:
+            if (rel in changed and design_changed) or (edited and not same(rel)):
                 moves.append(rel)          # the earlier design's copy (kept beside its analyses), or an edit
         if design_changed:
             # a package file that did not change, but whose project copy the module extended for the
             # earlier design (DDM results in design/calc_package.json), goes with that design's results
-            moves += [rel for rel in sorted(entries) if rel not in changed and (rd / rel).is_file() and not same(rel)]
+            moves += [rel for rel in sorted(entries) if rel not in moves and rel not in changed and (rd / rel).is_file() and not same(rel)]
     else:
         # No record: a project staged by an older hub, or a first staging. Whatever differs from the new
         # package is kept aside once; outputs are left where they are (their design is unknown).
@@ -476,9 +478,9 @@ def stage_inputs(run: Run, ctx: dict, log) -> None:
                     a, b = t.stat(), files[rel].stat()
                     if a.st_size != b.st_size:
                         return False
-                    if a.st_mtime_ns == b.st_mtime_ns:
-                        return True           # copy2 keeps the exact mtime: this is the copy we made
-                    return filecmp.cmp(files[rel], t, shallow=False)
+                    # Equal timestamps are not proof of equal bytes. filecmp also
+                    # caches by stat signature, which misses preserved-mtime edits.
+                    return _file_hash(files[rel]) == _file_hash(t)
                 except OSError:
                     return False
 

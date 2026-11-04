@@ -68,7 +68,9 @@ try:
 except ImportError:
     DrawingStore = None
 else:
-    app.include_router(drawing_router(DrawingStore(os.environ.get('OPENBIM_JOBS') or UB_JOBS), {'HR':HR_JOBS,'CFS':os.environ.get('CFS_JOBS')}))
+    app.include_router(drawing_router(DrawingStore(os.environ.get('OPENBIM_JOBS') or UB_JOBS),
+        {'HR':HR_JOBS,'CFS':os.environ.get('CFS_JOBS')},
+        {'HR':STELTIC_URL,'CFS':os.environ.get('CFS_URL')}))
 
 
 @app.middleware("http")
