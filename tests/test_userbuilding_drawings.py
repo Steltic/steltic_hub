@@ -62,6 +62,11 @@ def test_hub_and_openbim_manifest_share_the_project_store():
     assert [t['title'] for t in drawings['tabs']]==['Steltic import','IFC import','IFC export','Files']
     assert drawings['tabs'][1]['src']=='/ifc-import?project={job}'
     assert drawings['tabs'][2]['src']=='/ifc-export?project={job}'
+    assert drawings['server']['requires']==['steltic','steltic_cfs']
+    assert drawings['env_vars']['HR_URL']=='{server.steltic}'
+    assert drawings['env_vars']['CFS_URL']=='{server.steltic_cfs}'
+    assert user['server']['requires']==['steltic','steltic_cfs']
+    assert user['env_vars']['CFS_URL']=='{server.steltic_cfs}'
 
 
 def test_ordinary_hr_grouped_export_recovers_occurrences_and_questions():
@@ -82,7 +87,8 @@ def test_ordinary_hr_grouped_export_recovers_occurrences_and_questions():
     assert state['representation']=='captured_source_worklines'
     assert state['drawing_counts']['drawn_occurrences']==2
     assert state['source_readiness']=='needs_input' and state['drawing_status']=='provisional'
-    assert len(state['requests'])==4 and all(r['accepted'] and r['proposal'] for r in state['requests'])
+    assert {'MODEL-OCCURRENCES','MODEL-CONNECTIONS','MODEL-FLOORS','MODEL-OPENINGS'}<={r['id'] for r in state['requests']}
+    assert all(r['accepted'] and r['proposal'] for r in state['requests'])
     current=client.get(base).json()
     assert current['available_test_scenario'] is None and not current['questions']['blocks_drawings']
     model=client.get(base+'/file/source_workline_model.json').json()

@@ -19,7 +19,9 @@
   "env_vars": {
     "OPENBIM_JOBS": "{jobs_dir}",
     "HR_JOBS": "{data_dir}/modules_data/steltic/sessions/local/jobs",
-    "CFS_JOBS": "{data_dir}/modules_data/steltic_cfs/sessions/local/jobs"
+    "CFS_JOBS": "{data_dir}/modules_data/steltic_cfs/sessions/local/jobs",
+    "HR_URL": "{server.steltic}",
+    "CFS_URL": "{server.steltic_cfs}"
   },
   "server": {
     "command": [
@@ -32,7 +34,11 @@
       "{port}"
     ],
     "health": "/healthz",
-    "cwd": "{module_dir}"
+    "cwd": "{module_dir}",
+    "requires": [
+      "steltic",
+      "steltic_cfs"
+    ]
   },
   "output": {
     "root": "{job_dir}"
